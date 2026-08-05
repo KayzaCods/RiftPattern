@@ -47,7 +47,9 @@ def analyze_match(conn, match_id: str) -> int:
         keys = ", ".join(f"{det}@{ms}" for det, ms in fb_stats["dropped_keys"])
         print(
             f"   AVISO {match_id}: {fb_stats['dropped']} feedback(s) sin destino tras "
-            f"re-análisis (el detector cambió triggers/timestamps): {keys}"
+            f"re-análisis (el detector cambió triggers/timestamps): {keys}\n"
+            f"   Archivados en orphan_feedback: {fb_stats['orphaned']} "
+            f"(léelos con scripts/orphan_feedback.py)"
         )
     try:
         compute_reward.run_for_match(conn, match_id)

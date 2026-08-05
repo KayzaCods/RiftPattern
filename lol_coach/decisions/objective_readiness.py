@@ -617,6 +617,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     + (" Hiciste lo correcto." if ceded else "") + trade_txt
                 ),
                 ev_score=0.80,
+                taken=ceded,
             ),
             Option(
                 label="Forzar el objetivo / exponerte a contestarlo" + ("" if ceded else " (lo que hiciste)"),
@@ -625,6 +626,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     + ("" if ceded else " Te expusiste sin poder contestarlo.")
                 ),
                 ev_score=0.25,
+                taken=not ceded,
             ),
         ], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
 
@@ -644,6 +646,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     label="Aprovechaste el tiempo fuera del pit: reset/farm/presión (lo que hiciste) — uso correcto del tiempo",
                     predicted_consequence=f"El objetivo {why}; convertir ese tiempo en oro/presión fue lo acertado.",
                     ev_score=0.82,
+                    taken=True,
                 ),
                 Option(
                     label="Hacer acto de presencia en un objetivo ya asegurado",
@@ -659,6 +662,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     f"menor a favor de convertir ese tiempo en presión/farm en otra zona."
                 ),
                 ev_score=0.78,
+                taken=True,
             ),
             Option(
                 label="Desentenderte del pit antes de que cayera",
@@ -705,6 +709,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                 label=f"Contestaste {name} con buen setup (lo que hiciste) — fue lo correcto",
                 predicted_consequence=f"Setup {int(setup * 100)}% ({vis_txt}; {num_txt}). Decisión y ejecución alineadas.",
                 ev_score=0.84,
+                taken=True,
             )
             actual = Option(
                 label=f"Cederlo pese a tener el setup",
@@ -728,6 +733,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     "Salió, pero con poco setup era arriesgado: pudo costar más de lo que valía."
                 ),
                 ev_score=round(0.54 + 0.30 * setup, 2),
+                taken=True,
             )
             ids = [ACTION_VISION_SETUP, ACTION_FIGHT_ENTRY]
     elif near and not too_far:
@@ -744,6 +750,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     f"del robo, no la decisión. El ajuste es de ejecución: smite/daño al objetivo, foco de pelea."
                 ),
                 ev_score=0.70,
+                taken=True,
             )
             actual = Option(
                 label=f"Ceder {name} sin pelearlo, teniendo setup",
@@ -761,6 +768,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                 label=f"Forzaste {name} sin visión/números y lo perdiste (lo que hiciste)",
                 predicted_consequence=f"Estabas ahí sin setup ({vis_txt}; {num_txt}) y cayó al enemigo.",
                 ev_score=0.42,
+                taken=True,
             )
             ids = [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
     else:
@@ -775,6 +783,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     f"Con setup {int(setup * 100)}% para disputarlo, el cambio fue una jugada válida."
                 ),
                 ev_score=0.78,
+                taken=True,
             )
             actual = Option(
                 label=f"Disputar {name} en vez del cambio",
@@ -793,6 +802,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                     f"jugada (farm, presión, reset) fue la decisión correcta."
                 ),
                 ev_score=0.80,
+                taken=True,
             )
             actual = Option(
                 label=f"Forzar {name} sin visión ni números",
@@ -810,6 +820,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                 label=f"El equipo entero cedió {name} (lo que hiciste)",
                 predicted_consequence="Tu llegada sola no lo cambiaba; el cede fue a nivel de equipo.",
                 ev_score=0.62,
+                taken=True,
             )
             ids = [ACTION_VISION_SETUP, ACTION_IGNORE_OBJECTIVE]
         else:
@@ -822,6 +833,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                 label=f"Lo cediste sin presentarte, con tu equipo en zona (lo que hiciste)",
                 predicted_consequence="Con setup y aliados jugándolo, no presentarse sí regala valor.",
                 ev_score=0.48,
+                taken=True,
             )
             ids = [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
 

@@ -495,6 +495,7 @@ def _build_options(
                 + (". Pelea perdida sin ti." if fight_lost else ". Pelea ganada igual sin ti." if fight_dominant_win else ".")
             ),
             ev_score=round(stay, 2),
+            taken=True,
         ),
     ]
 

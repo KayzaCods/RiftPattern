@@ -29,7 +29,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from lol_coach import trade_queue as TQ
 from lol_coach.config import load_config
+from lol_coach.preference import DEFAULT_WEIGHTS, load_weights
 
 WON = '%"positive_trade": true%'        # trades ganados: ocultos de Decisiones
 OWN = ("master", "emerald")             # cuentas propias; excluye la referencia
@@ -41,9 +43,8 @@ def _date(ms) -> str:
     return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%d")
 
 
-def build(conn: sqlite3.Connection) -> tuple[str, int, int]:
-    """(markdown, n_trades, n_matches) de los trades perdidos sin marcar."""
-    rows = conn.execute(
+def _unmarked_rows(conn: sqlite3.Connection) -> list:
+    return conn.execute(
         f"""
         SELECT d.id, d.match_id, d.game_time_ms, d.context_json, m.our_cohort,
                m.game_start_ms,
@@ -54,20 +55,73 @@ def build(conn: sqlite3.Connection) -> tuple[str, int, int]:
           AND m.our_cohort IN ({",".join("?" * len(OWN))})
           AND d.context_json NOT LIKE ?
           AND d.user_feedback IS NULL AND d.user_best_option IS NULL
-        ORDER BY m.game_start_ms DESC, d.game_time_ms ASC
         """,
         (*OWN, WON),
     ).fetchall()
 
-    by_match: dict[str, list] = {}
-    for r in rows:
-        by_match.setdefault(r["match_id"], []).append(r)
 
-    out = ["# Cola de feedback de trades (perdidos sin marcar)", ""]
+def _marked_bucket_counts(conn: sqlite3.Connection) -> dict:
+    """Buckets already covered by human marks on lost trades -- coverage seed so
+    the ranking steers scarce new marks toward under-sampled state buckets."""
+    rows = conn.execute(
+        f"""
+        SELECT d.id, d.game_time_ms, d.context_json,
+               (SELECT p.champion_name FROM participants p
+                 WHERE p.match_id = d.match_id AND p.puuid = m.our_puuid) AS champ
+        FROM decisions d JOIN matches m ON m.match_id = d.match_id
+        WHERE d.detector_id = 'trade_v1'
+          AND m.our_cohort IN ({",".join("?" * len(OWN))})
+          AND d.context_json NOT LIKE ?
+          AND (d.user_feedback IS NOT NULL OR d.user_best_option IS NOT NULL)
+        """,
+        (*OWN, WON),
+    ).fetchall()
+    counts: dict = {}
+    for r in rows:
+        item = TQ.item_from_context(
+            r["id"], r["game_time_ms"], json.loads(r["context_json"]), champion=r["champ"]
+        )
+        b = TQ.bucket_of(item)
+        counts[b] = counts.get(b, 0) + 1
+    return counts
+
+
+def _why(item: dict) -> str:
+    """Human-readable 'why is this near the top': Fisher + state bucket."""
+    phase, gold, champion = item["bucket"]
+    return f"Fisher {item['fisher']:.3f} · {phase}/{gold}/{champion}"
+
+
+def build(conn: sqlite3.Connection, db_path: str) -> tuple[str, int, int]:
+    """(markdown, n_trades, n_matches) de los trades perdidos sin marcar,
+    ORDENADOS por informatividad para el learner (Fisher x cobertura). Los pesos
+    activos (`hef_weights.json`) se leen junto a `db_path`."""
+    rows = _unmarked_rows(conn)
+    weights = load_weights(db_path) or DEFAULT_WEIGHTS
+
+    items = []
+    for r in rows:
+        ctx = json.loads(r["context_json"])
+        item = TQ.item_from_context(r["id"], r["game_time_ms"], ctx, champion=r["champ"])
+        item.update(
+            match_id=r["match_id"], cohort=r["our_cohort"],
+            date=_date(r["game_start_ms"]),
+            damage=(ctx.get("duo_damage_taken"), ctx.get("enemy_duo_damage_taken")),
+            hp=ctx.get("our_hp_pct_end"), mana=ctx.get("our_mana_pct_end"),
+            consequence=ctx.get("consequence") or "—",
+            span=ctx.get("minute_span") or ctx.get("time_mmss") or "?",
+        )
+        items.append(item)
+
+    ranked = TQ.rank(items, weights, _marked_bucket_counts(conn))
+    n_matches = len({it["match_id"] for it in ranked})
+
+    out = ["# Cola de feedback de trades (perdidos sin marcar, por informatividad)", ""]
     out.append(
-        f"> {len(rows)} trades perdidos sin marcar en {len(by_match)} partidas (cuentas "
-        f"propias). Márcalos en el dashboard: pestaña **Decisiones**, filtro **Trade**. "
-        f"Re-corre el script para ver lo que queda."
+        f"> {len(ranked)} trades perdidos sin marcar en {n_matches} partidas (cuentas "
+        f"propias), ordenados de mayor a menor informatividad para el learner. "
+        f"Márcalos en el dashboard: pestaña **Decisiones**, filtro **Trade** (busca el "
+        f"`id`). Re-corre el script para ver lo que queda."
     )
     out.append("")
     out.append(
@@ -76,32 +130,34 @@ def build(conn: sqlite3.Connection) -> tuple[str, int, int]:
         "enemigo en la ventana (proxy de quién ganó el intercambio)."
     )
     out.append("")
-
-    for mid, items in by_match.items():
-        r0 = items[0]
+    out.append(
+        "**Orden = Fisher `p(1-p)` de la comparación (acción tomada vs su alternativa "
+        "más cercana, bajo los pesos activos) × cobertura del bucket (fase × banda de "
+        "oro × campeón). `por qué` declara ambos.** NOTA: en trade_v1 el Fisher es casi "
+        "plano (la acción es siempre `fight_entry` y las dos opciones difieren solo en "
+        "`action_fit` por un ~constante), así que el orden lo domina la COBERTURA: "
+        "reparte las marcas escasas entre campeones/fases/bandas de oro en vez de "
+        "apelotonarlas donde ya marcaste."
+    )
+    out.append("")
+    out.append("| # | id | campeón · fecha | min | daño (tú vs enemigo) | estado | consecuencia | por qué está arriba |")
+    out.append("|---|---|---|---|---|---|---|---|")
+    for i, it in enumerate(ranked, 1):
+        dus, den = it["damage"]
+        state = " · ".join(
+            x for x in (
+                f"HP {int(it['hp'] * 100)}%" if it["hp"] is not None else None,
+                f"maná {int(it['mana'] * 100)}%" if it["mana"] is not None else None,
+            ) if x
+        ) or "—"
+        who = f"{it['champion'] or '?'} · {it['date']} ({it['cohort']})"
         out.append(
-            f"## {r0['champ'] or '?'} — {_date(r0['game_start_ms'])} "
-            f"({r0['our_cohort']}) · {len(items)} sin marcar · `{mid}`"
+            f"| {i} | {it['id']} | {who} | {it['span']} | {dus} vs {den} | "
+            f"{state} | {it['consequence']} | {_why(it)} |"
         )
-        out.append("")
-        out.append("| id | min | daño (tú vs enemigo) | estado al cierre | consecuencia |")
-        out.append("|---|---|---|---|---|")
-        for r in items:
-            ctx = json.loads(r["context_json"])
-            dus, den = ctx.get("duo_damage_taken"), ctx.get("enemy_duo_damage_taken")
-            hp, mana = ctx.get("our_hp_pct_end"), ctx.get("our_mana_pct_end")
-            state = " · ".join(
-                x for x in (
-                    f"HP {int(hp * 100)}%" if hp is not None else None,
-                    f"maná {int(mana * 100)}%" if mana is not None else None,
-                ) if x
-            ) or "—"
-            cons = ctx.get("consequence") or "—"
-            span = ctx.get("minute_span") or ctx.get("time_mmss") or "?"
-            out.append(f"| {r['id']} | {span} | {dus} vs {den} | {state} | {cons} |")
-        out.append("")
+    out.append("")
 
-    return "\n".join(out), len(rows), len(by_match)
+    return "\n".join(out), len(ranked), n_matches
 
 
 def main() -> int:
@@ -112,7 +168,7 @@ def main() -> int:
     db = args.db or load_config()["paths"]["sqlite_db"]
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
-    text, n, nmatches = build(conn)
+    text, n, nmatches = build(conn, db)
     conn.close()
 
     out_path = Path(db).parent / "trade_feedback_queue.md"

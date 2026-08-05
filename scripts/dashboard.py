@@ -34,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lol_coach.config import load_config  # noqa: E402
 from lol_coach.db import connect as _connect_schema  # noqa: E402  (ensures all tables exist)
 from lol_coach.decisions.features import (  # noqa: E402
-    _commit_fit, _info_term, action_fingerprint, hef_label, hef_score,
-    mmss, power_index, power_label,
+    STALE_REASONS, _commit_fit, _info_term, action_fingerprint, action_label_es,
+    fingerprint_action_ids, hef_label, hef_score,
+    mark_validity, MARK_REVIVED, mmss, power_index, power_label, taken_index,
 )
 from lol_coach.preference import (  # noqa: E402
     DEFAULT_WEIGHTS, learn_weights, load_weights, save_weights,
@@ -44,6 +45,10 @@ from lol_coach import feedback  # noqa: E402  (vocabulario de tipo de marca, #12
 from lol_coach import game_data  # noqa: E402  (patch_version para el dashboard)
 from lol_coach import progress  # noqa: E402  (criterio + matematica del #10)
 from lol_coach import session  # noqa: E402  (seleccion pura de la Sesion de hoy, #16)
+from lol_coach import trade_queue  # noqa: E402  (ranking por informatividad de la cola #5)
+from lol_coach.snapshots import biggest_drop_start_s, hp_pct_series_windowed  # noqa: E402
+from lol_coach import exposure  # noqa: E402  (#17 Fase 1: exposicion sin muerte, report-only)
+from lol_coach.context import find_clip_for_event  # noqa: E402  (clip de un momento arbitrario)
 
 CFG = load_config()
 DB_PATH = CFG["paths"]["sqlite_db"]
@@ -110,10 +115,11 @@ def query_ingest_status(conn, status_path: Path | None = None) -> dict:
 HERE = Path(__file__).resolve().parent
 HTML_PATH = HERE / "dashboard.html"
 
-# Every decision encodes exactly one option as the one the player actually took,
-# flagged inside its label text (same regex as features.TAKEN_MARKER; keep in
-# sync). ev_taken = that option's score; ev_optimal = best available score.
-TAKEN_MARKER = re.compile(r"hiciste|estado real|lo que hiciste|permaneciste", re.I)
+# Every decision encodes exactly one option as the one the player actually took.
+# Quien la localiza es `features.taken_index` (campo `taken` explicito, con
+# fallback al marcador de texto para filas antiguas): el dashboard lo llama en vez
+# de llevar su propia copia del regex, que era la duplicacion que ataba el marcado
+# a la redaccion. ev_taken = score de esa opcion; ev_optimal = el mejor disponible.
 
 DETECTORS = ["death_v1", "trade_v1", "tempo_v1", "objective_readiness_v1"]
 FEEDBACK_VALUES = {"agree", "disagree", "equivalent", "missing_context"}
@@ -149,7 +155,8 @@ def ev_pair(opts: list) -> tuple:
     evs = [o["ev_score"] for o in opts if isinstance(o.get("ev_score"), (int, float))]
     if not evs:
         return (None, None)
-    taken = next((o["ev_score"] for o in opts if TAKEN_MARKER.search(o.get("label", ""))), None)
+    ti = taken_index(opts)
+    taken = opts[ti].get("ev_score") if ti is not None else None
     return (taken, max(evs))
 
 
@@ -182,6 +189,20 @@ def build_ctx(det: str, c: dict) -> dict:
             out["Tu maná al cierre"] = _pct(c["our_mana_pct_end"])
         if c.get("consequence"):
             out["Consecuencia"] = c["consequence"]
+        info = (c.get("state_features") or {}).get("info_risk") or {}
+        vis = []
+        if info.get("wards_nearby") is not None:
+            vis.append(f"{info['wards_nearby']} wards cerca")
+        if info.get("enemies_unseen") is not None:
+            vis.append(f"{info['enemies_unseen']} enemigo(s) sin ver")
+        jg = info.get("enemy_jg_unseen_s")
+        if isinstance(jg, (int, float)) and jg > 0:
+            vis.append(f"jungla enemiga sin ver {int(jg)}s")
+        if vis:
+            out["Visión"] = " · ".join(vis)
+        sr = info.get("safety_ratio")
+        if isinstance(sr, (int, float)):
+            out["Posición"] = f"profundidad {sr:.2f} — {'tu mitad' if sr >= 0.5 else 'mitad enemiga'}"
     elif det == "tempo_v1":
         out["Resultado pelea"] = c.get("fight_outcome_for_us", "—")
         if c.get("distance_to_fight_units") is not None:
@@ -232,6 +253,7 @@ SQL_DEC = """
 SELECT d.id, d.match_id, d.detector_id, d.game_time_ms, d.moment, d.outcome,
        d.context_json, d.options_json, d.argument, d.clip_path, d.clip_offset_s,
        d.user_feedback, d.user_feedback_note, d.user_best_option, d.user_mark_type,
+       d.user_feedback_fingerprint, d.user_feedback_at_utc, d.created_at_utc,
        m.our_cohort AS cohort, m.game_start_ms,
        p.champion_name AS champion, p.team_position AS role
 FROM decisions d
@@ -271,12 +293,49 @@ def _situation(detector: str, ctx: dict):
     return None
 
 
+def _historical_mark(row: sqlite3.Row, ctx: dict) -> dict | None:
+    """El bloque "marca historica" de la card, o None si la marca sigue vigente.
+
+    `user_best_option` es un INDICE contra el conjunto de opciones de ENTONCES.
+    Cuando ese conjunto cambia, la marca se conserva (nota incluida) pero deja de
+    entrenar al learner — y hasta ahora la card seguia pintandola como vigente,
+    sin forma de que el usuario lo supiera. El veredicto sale de
+    `features.mark_validity`, la MISMA funcion que usa _decision_feedback_pairs:
+    card y learner no pueden discrepar.
+
+    Solo aplica a marcas CON `user_best_option`: es el unico dato cuyo
+    significado depende del orden de las opciones.
+    """
+    if row["user_best_option"] is None:
+        return None
+    verdict = mark_validity(
+        row["user_feedback_fingerprint"], row["detector_id"], ctx.get("action") or {},
+        json.loads(row["options_json"]), row["user_feedback_at_utc"], row["created_at_utc"])
+    if verdict not in STALE_REASONS:
+        return None
+    old_ids = fingerprint_action_ids(row["user_feedback_fingerprint"])
+    bo = row["user_best_option"]
+    chosen = old_ids[bo] if 0 <= bo < len(old_ids) else None
+    return {
+        "reason": verdict,
+        "marked_at": row["user_feedback_at_utc"],
+        "feedback": row["user_feedback"],
+        "mark_type": row["user_mark_type"],
+        "note": row["user_feedback_note"],
+        "chosen_action_id": chosen,
+        # Mismo id, ya en espanol: el mapa vive en features.ACTION_LABELS_ES y no
+        # se duplica en el front.
+        "chosen_action_label": action_label_es(chosen) if chosen else None,
+        "previous_action_ids": [action_label_es(a) for a in old_ids],
+    }
+
+
 def enrich(row: sqlite3.Row, notes_map: dict | None = None) -> dict:
     ctx = json.loads(row["context_json"])
     opts = json.loads(row["options_json"])
     evs = [o["ev_score"] for o in opts if isinstance(o.get("ev_score"), (int, float))]
     ev_optimal = max(evs) if evs else None
-    taken_idx = next((i for i, o in enumerate(opts) if TAKEN_MARKER.search(o.get("label", ""))), None)
+    taken_idx = taken_index(opts)
     ev_taken = opts[taken_idx]["ev_score"] if taken_idx is not None else None
     options = [
         {
@@ -302,6 +361,7 @@ def enrich(row: sqlite3.Row, notes_map: dict | None = None) -> dict:
         "date": fmt_date(row["game_start_ms"]),
         "game_time_ms": row["game_time_ms"],
         "time": ctx.get("time_mmss") or mmss(row["game_time_ms"]),
+        "minute_span": ctx.get("minute_span"),   # trades: ventana medida ("min 8" / "min 7-8")
         "objective": ctx.get("objective"),
         "objective_type": ctx.get("objective_type"),
         "situation": _situation(row["detector_id"], ctx),
@@ -323,6 +383,9 @@ def enrich(row: sqlite3.Row, notes_map: dict | None = None) -> dict:
         "feedback_note": row["user_feedback_note"],
         "best_option": row["user_best_option"],
         "mark_type": row["user_mark_type"],
+        # Presente SOLO si la marca ya no cuenta porque el conjunto de opciones
+        # cambio bajo ella (#25). La card lo pinta aparte del feedback vigente.
+        "historical_mark": _historical_mark(row, ctx),
         # The player's own reasoning about this play, in their words, taken from
         # the pairwise judgments it appeared in. Lets the coach cite how THEY think.
         "user_notes": (notes_map or {}).get(row["id"], []),
@@ -470,6 +533,53 @@ def query_decisions(conn, cohort, detector, match=None, include_hidden=False) ->
     sql = SQL_DEC.format(where=("WHERE " + " AND ".join(where)) if where else "")
     nmap = _notes_map(conn)
     return [enrich(r, nmap) for r in conn.execute(sql, args)]
+
+
+# Momento del trade via HP del recorder (1Hz): Riot solo da danio POR MINUTO,
+# asi que el detector estampa el minuto y el clip abre en su inicio — habia que
+# buscar el frame a mano (feedback 2026-07-18). La mayor caida de HP propia
+# dentro de la ventana localiza el segundo del intercambio. Se computa PEREZOSO
+# (una decision a la vez, al abrir su clip): los snapshots.jsonl pesan 50-100 MB,
+# leer el de cada partida en la ruta masiva /api/decisions colgaba el dashboard.
+# El lector por ventana corta apenas pasa el minuto; el resultado se cachea por
+# decision. Sin session o sin caida >= umbral -> None (clip abre al inicio del min).
+_TRADE_MOMENT_CACHE: dict = {}   # decision_id -> moment_ms | None
+
+
+def _span_minutes_from_text(minute_span):
+    """Fallback para decisiones viejas sin `span_minutes`: parsea "min A-B" -> B-A.
+
+    Si no hay dos numeros separados por guion (formato inesperado o ausente),
+    cae a 1 minuto en vez de fallar.
+    """
+    text = minute_span or ""
+    m = re.search(r"(-?\d+)\s*-\s*(-?\d+)", text)
+    if not m:
+        return 1
+    a, b = int(m.group(1)), int(m.group(2))
+    n = b - a
+    return n if n >= 1 else 1
+
+
+def trade_moment_ms(conn, decision_id):
+    if decision_id in _TRADE_MOMENT_CACHE:
+        return _TRADE_MOMENT_CACHE[decision_id]
+    row = conn.execute(
+        "SELECT d.game_time_ms, d.context_json, s.session_dir "
+        "FROM decisions d LEFT JOIN sessions s ON s.match_id = d.match_id "
+        "WHERE d.id = ? AND d.detector_id = 'trade_v1'", (decision_id,)).fetchone()
+    moment = None
+    if row and row["session_dir"]:
+        ctx = json.loads(row["context_json"])
+        n_min = ctx.get("span_minutes")
+        if not isinstance(n_min, int) or n_min < 1:
+            n_min = _span_minutes_from_text(ctx.get("minute_span"))
+        t0 = row["game_time_ms"] / 1000.0
+        serie = hp_pct_series_windowed(Path(row["session_dir"]), t0, t0 + 60.0 * n_min)
+        start_s = biggest_drop_start_s(serie)
+        moment = int(start_s * 1000) if start_s is not None else None
+    _TRADE_MOMENT_CACHE[decision_id] = moment
+    return moment
 
 
 # A) Decisions grouped by match. obtener_partidas(): matches + decision counts.
@@ -867,21 +977,16 @@ def _decision_feedback_pairs(conn) -> tuple[list, dict]:
             continue  # a near-tie the user judged equivalent: no directional signal
         c = json.loads(r["context_json"])
         action = c.get("action") or {}
-        fp_stored = r["user_feedback_fingerprint"]
-        if fp_stored:
-            fp_now = action_fingerprint(
-                r["detector_id"], action, json.loads(r["options_json"]))
-            if fp_stored != fp_now:
-                stats["n_stale"] += 1   # the option set really did change
-                continue
-            fb_at, made_at = r["user_feedback_at_utc"], r["created_at_utc"]
-            if fb_at and made_at and fb_at < made_at:
-                stats["n_revived"] += 1  # timestamp said stale; content says valid
-        else:
-            fb_at, made_at = r["user_feedback_at_utc"], r["created_at_utc"]
-            if fb_at and made_at and fb_at < made_at:
-                stats["n_stale"] += 1   # no fingerprint: conservative timestamp gate
-                continue
+        # Un solo dueno de la regla de vigencia (features.mark_validity): la card
+        # del dashboard llama a la MISMA funcion, asi que no pueden divergir.
+        verdict = mark_validity(
+            r["user_feedback_fingerprint"], r["detector_id"], action,
+            json.loads(r["options_json"]), r["user_feedback_at_utc"], r["created_at_utc"])
+        if verdict in STALE_REASONS:
+            stats["n_stale"] += 1
+            continue
+        if verdict == MARK_REVIVED:
+            stats["n_revived"] += 1  # timestamp said stale; content says valid
         sf = c.get("state_features")
         avail = action.get("available_actions") or []
         taken_aid = action.get("action_id")
@@ -965,13 +1070,10 @@ def query_review_queue(conn) -> dict:
             continue
         ctx = json.loads(r["context_json"])
         action = ctx.get("action") or {}
-        fp = r["user_feedback_fingerprint"]
-        if fp:
-            if fp != action_fingerprint(r["detector_id"], action, json.loads(r["options_json"])):
-                continue  # options really changed since the mark
-        elif (r["user_feedback_at_utc"] and r["created_at_utc"]
-              and r["user_feedback_at_utc"] < r["created_at_utc"]):
-            continue      # no fingerprint: conservative timestamp gate
+        if mark_validity(r["user_feedback_fingerprint"], r["detector_id"], action,
+                         json.loads(r["options_json"]), r["user_feedback_at_utc"],
+                         r["created_at_utc"]) in STALE_REASONS:
+            continue      # misma regla que el learner y que la card
         avail = action.get("available_actions") or []
         taken = action.get("action_id")
         bo = r["user_best_option"]
@@ -1320,7 +1422,7 @@ def _session_candidates(conn) -> list:
         ctx = json.loads(r["context_json"])
         opts = json.loads(r["options_json"])
         evs = [o.get("ev_score") for o in opts if isinstance(o.get("ev_score"), (int, float))]
-        ti = next((i for i, o in enumerate(opts) if TAKEN_MARKER.search(o.get("label", ""))), None)
+        ti = taken_index(opts)
         ev_taken = opts[ti].get("ev_score") if ti is not None else None
         ev_optimal = max(evs) if evs else None
         out.append({
@@ -1371,6 +1473,187 @@ def query_session(conn, exclude=()) -> dict:
         "temporal": session.temporal_note(minutes),
         "candidates_by_bucket": counts,
     }
+
+
+def _trade_marked_bucket_counts(conn) -> dict:
+    """Coverage seed for the trade queue: buckets already covered by marks on
+    lost trades, so the ranking steers scarce new marks to under-sampled ones."""
+    counts: dict = {}
+    for r in conn.execute(
+            "SELECT d.id, d.game_time_ms, d.context_json, "
+            "(SELECT p.champion_name FROM participants p WHERE p.match_id = d.match_id "
+            " AND p.puuid = m.our_puuid) AS champion "
+            "FROM decisions d JOIN matches m ON m.match_id = d.match_id "
+            "WHERE d.detector_id = 'trade_v1' AND d.context_json NOT LIKE ? "
+            "AND (d.user_feedback IS NOT NULL OR d.user_best_option IS NOT NULL) "
+            "AND " + _own_cohort_sql("m.our_cohort"),
+            (_HIDDEN_POSITIVE,)):
+        item = trade_queue.item_from_context(
+            r["id"], r["game_time_ms"], json.loads(r["context_json"]), champion=r["champion"])
+        b = trade_queue.bucket_of(item)
+        counts[b] = counts.get(b, 0) + 1
+    return counts
+
+
+def query_trade_queue(conn, exclude=()) -> dict:
+    """Campana #5: cola de trades PERDIDOS sin marcar, enriquecidos igual que
+    /api/decisions y ORDENADOS por informatividad (trade_queue: Fisher x
+    cobertura). Cada item lleva `rank_why` (Fisher + bucket) para declarar por
+    que esta arriba. `exclude` = ids ya en pantalla (para 'traer mas')."""
+    weights = _ACTIVE_WEIGHTS or trade_queue.DEFAULT_WEIGHTS
+    marked = _trade_marked_bucket_counts(conn)
+    rows = conn.execute(
+        SQL_DEC.format(where=(
+            "WHERE d.detector_id = 'trade_v1' "
+            "AND d.context_json NOT LIKE ? "
+            "AND d.user_feedback IS NULL AND d.user_best_option IS NULL "
+            "AND " + _own_cohort_sql("m.our_cohort"))),
+        (_HIDDEN_POSITIVE,)).fetchall()
+    nmap = _notes_map(conn)
+    items, enriched = [], {}
+    for r in rows:
+        if r["id"] in exclude:
+            continue
+        ctx = json.loads(r["context_json"])
+        items.append(
+            trade_queue.item_from_context(r["id"], r["game_time_ms"], ctx, champion=r["champion"]))
+        enriched[r["id"]] = enrich(r, nmap)
+    moments = []
+    for it in trade_queue.rank(items, weights, marked):
+        d = enriched[it["id"]]
+        phase, gold, champ = it["bucket"]
+        d["rank_why"] = f"Fisher {it['fisher']:.3f} · {phase} / {gold} / {champ}"
+        moments.append(d)
+    return {"moments": moments, "total": len(moments)}
+
+
+# El escaneo de exposicion recorre ~4600 frames y llama build_state_features en
+# cada uno: es lo mas caro del dashboard. Depende solo de la DB de partidas (NO
+# del feedback: /api/feedback, /api/preference y /api/weights/* no la tocan), asi
+# que en vez de limpiarse en cada POST lleva un token de frescura barato (COUNT +
+# MAX(analyzed_at_utc) sobre matches): una partida nueva ingerida/analizada cambia
+# el token y refresca sola; una marca de feedback no. Cache structure: {cohort: (token, result)}.
+# El token nuevo sobrescribe la entrada anterior del cohorte, manteniendo el dict acotado.
+_EXPOSURE_CACHE: dict = {}
+_EXPOSURE_CACHE_LOCK = threading.Lock()
+EXPOSURE_MOMENTS_LIMIT = 40   # lista revisable: muestra suficiente para juzgar FP
+
+
+def _exposure_freshness_token(conn) -> tuple:
+    r = conn.execute("SELECT COUNT(*) AS n, MAX(analyzed_at_utc) AS m FROM matches").fetchone()
+    return (r["n"], r["m"])
+
+
+def _exposure_cached(conn, cohort) -> dict:
+    token = _exposure_freshness_token(conn)
+    with _EXPOSURE_CACHE_LOCK:
+        entry = _EXPOSURE_CACHE.get(cohort)
+    if entry is not None:
+        cached_token, cached_result = entry
+        if cached_token == token:
+            return cached_result
+    res = query_exposure(conn, cohort)
+    with _EXPOSURE_CACHE_LOCK:
+        _EXPOSURE_CACHE[cohort] = (token, res)
+    return res
+
+
+def query_exposure(conn, cohort=None) -> dict:
+    """#17 Fase 1 (REPORT-ONLY): exposiciones sin muerte, agregadas + lista
+    revisable para medir falsos positivos. No persiste nada ni pide feedback."""
+    cf = _cohort_filter(cohort)
+    where = "WHERE analyzed_at_utc IS NOT NULL AND " + _own_cohort_sql("our_cohort")
+    args: list = []
+    if cf and cf not in REFERENCE_COHORTS:
+        where += " AND our_cohort = ?"
+        args.append(cf)
+    rows = conn.execute(
+        f"SELECT match_id, game_start_ms, our_cohort FROM matches {where}", args).fetchall()
+    meta = {r["match_id"]: r for r in rows}
+
+    # Segmenta POR MATCH (los episodios son frames consecutivos dentro de una
+    # partida) y agrega/lista sobre EPISODIOS, no frames: contar frames infla el
+    # N por autocorrelacion y falsea cualquier cota de FP (scout 2026-07-19).
+    episodes = []
+    for mid in meta:
+        episodes.extend(exposure.segment_episodes(exposure.scan_match(conn, mid)))
+
+    agg = exposure.aggregate(episodes, n_matches=len(meta))
+    top = sorted(episodes, key=lambda e: e.peak_severity, reverse=True)
+    moments = []
+    for e in top[:EXPOSURE_MOMENTS_LIMIT]:
+        m = meta.get(e.match_id)
+        clip_path, offset_s = find_clip_for_event(conn, e.match_id, e.start_ms)
+        dur = int((e.end_ms - e.start_ms) / 1000)
+        moments.append({
+            "match": e.match_id,
+            "cohort": m["our_cohort"] if m else None,
+            "date": fmt_date(m["game_start_ms"]) if m else "?",
+            "time": mmss(e.start_ms),
+            "game_time_ms": e.start_ms,   # el salto a Decisiones busca este momento en el replay
+            "duration_s": dur,            # 0 = episodio de un solo frame
+            "n_frames": e.n_frames,
+            "champion": e.champion or "?",
+            "phase": exposure.phase_of(e.start_ms),
+            "gold_band": e.gold_band,
+            "safety_ratio": e.worst_safety_ratio,
+            "enemies_unseen": e.max_enemies_unseen,
+            "severity": e.peak_severity,
+            "died": e.died,
+            "has_clip": bool(clip_path),
+            "clip_offset_s": offset_s,
+        })
+    return {"aggregate": agg, "moments": moments, "shown": len(moments)}
+
+
+# --- Anchor set de exposicion (#17): la clave de respuestas -----------------
+# Las muertes que el jugador marco en desacuerdo ya traen su nota diciendo si el
+# error real fue la posicion/vision ANTES de morir. Etiquetarlas da el ground
+# truth contra el que medir exposure_v1 (recall y separabilidad).
+# A CIEGAS a proposito: este endpoint NO dice si exposure_v1 disparo en cada
+# muerte. Mostrarlo anclaria el juicio en la respuesta del sistema (sesgo de
+# confirmacion, el modo de fallo clasico de validar un detector contra su autor).
+ANCHOR_LABELS = ("yes", "no", "unsure")
+
+
+def query_anchor_set(conn) -> dict:
+    """Muertes propias marcadas en desacuerdo, ENRIQUECIDAS (para ver el clip y
+    el contexto al juzgar) + la nota del jugador y su etiqueta actual."""
+    labels = {r["decision_key"]: r["label"]
+              for r in conn.execute("SELECT decision_key, label FROM exposure_anchors")}
+    nmap = _notes_map(conn)
+    where = ("WHERE d.detector_id = 'death_v1' AND d.user_feedback = 'disagree' "
+             "AND d.user_feedback_note IS NOT NULL AND TRIM(d.user_feedback_note) <> '' "
+             "AND " + _own_cohort_sql("m.our_cohort"))
+    items = []
+    for r in conn.execute(SQL_DEC.format(where=where)):
+        d = enrich(r, nmap)
+        key = f"{r['match_id']}|{r['detector_id']}|{r['game_time_ms']}"
+        d["anchor_key"] = key
+        d["anchor_label"] = labels.get(key)
+        items.append(d)
+    n_marked = sum(1 for d in items if d["anchor_label"])
+    return {"moments": items, "total": len(items), "n_marked": n_marked}
+
+
+def set_anchor(conn, decision_id: int, label) -> dict:
+    """Guarda (o borra, con label=None) la etiqueta del anchor set. Se guarda por
+    clave ESTABLE, asi que sobrevive a un re-analisis."""
+    key = _decision_key(conn, decision_id)
+    if not key:
+        return {"error": "decision no encontrada"}
+    if label is None:
+        conn.execute("DELETE FROM exposure_anchors WHERE decision_key = ?", (key,))
+    elif label in ANCHOR_LABELS:
+        conn.execute(
+            "INSERT INTO exposure_anchors (decision_key, label, marked_at_utc) "
+            "VALUES (?,?,?) ON CONFLICT(decision_key) DO UPDATE SET "
+            "label=excluded.label, marked_at_utc=excluded.marked_at_utc",
+            (key, label, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    else:
+        return {"error": f"label invalida: {label}"}
+    conn.commit()
+    return {"ok": True, "key": key, "label": label}
 
 
 def set_feedback(conn, decision_id: int, payload: dict) -> dict:
@@ -1594,6 +1877,17 @@ class Handler(BaseHTTPRequestHandler):
                     exc = qs.get("exclude", [""])[0]
                     exclude = {int(x) for x in exc.split(",") if x.strip().isdigit()}
                     self._json(query_session(conn, exclude))
+                elif u.path == "/api/trade_queue":
+                    exc = qs.get("exclude", [""])[0]
+                    exclude = {int(x) for x in exc.split(",") if x.strip().isdigit()}
+                    self._json(query_trade_queue(conn, exclude))
+                elif u.path == "/api/trade_moment":
+                    tid = qs.get("id", [None])[0]
+                    self._json({"moment_ms": trade_moment_ms(conn, int(tid)) if tid and tid.isdigit() else None})
+                elif u.path == "/api/exposure":
+                    self._json(_exposure_cached(conn, qs.get("cohort", [None])[0]))
+                elif u.path == "/api/anchor_set":
+                    self._json(query_anchor_set(conn))
                 else:
                     self._json({"error": "not found"}, 404)
             except Exception as exc:  # surface errors as JSON instead of a blank 500
@@ -1617,6 +1911,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(set_feedback(conn, int(payload["id"]), payload))
             elif u.path == "/api/preference":
                 self._json(save_preference(conn, payload))
+            elif u.path == "/api/anchor":
+                self._json(set_anchor(conn, int(payload["id"]), payload.get("label")))
             elif u.path == "/api/weights/apply":
                 self._json(apply_weights(conn))
             elif u.path == "/api/weights/reset":

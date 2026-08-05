@@ -30,9 +30,12 @@ WARD_NEARBY_UNITS = 2000         # our wards counted as "near us"
 WARD_LOOKBACK_MS = 120_000       # how far back to look for nearby wards
 CS_WINDOW_MS = 180_000           # 3-minute window for cs_last_3min_diff
 
-# Marker identifying the option the player actually took. Same convention the
-# detectors use in their option labels; re-verified 2026-06-10: matches exactly
-# one option in every decision across all active detectors.
+# LEGACY (#23, fase A). Marker identifying the option the player actually took
+# by its label prose. Superseded by the explicit `base.Option.taken` flag, which
+# the detectors now set; this regex survives ONLY as the backward-compatibility
+# fallback of `taken_index` for rows persisted in options_json before the flag
+# existed (they have no `taken` key). No new code should read it: reading the
+# marker is what chained the taken-marker to the wording of the labels.
 TAKEN_MARKER = re.compile(r"hiciste|estado real|lo que hiciste|permaneciste", re.I)
 
 
@@ -45,6 +48,7 @@ def mmss(ms: int) -> str:
 # ----------------------------------------------------- standard action vocab
 ACTION_FIGHT_ENTRY = "fight_entry"        # entrar a la pelea / commit
 ACTION_DISENGAGE = "disengage"            # retroceder / no pelear
+ACTION_ATTRITION = "attrition_trade"      # perder HP a proposito por presion/tempo
 ACTION_PUSH_WAVE = "push_wave"            # pushear la oleada
 ACTION_HOLD_WAVE = "hold_wave"            # mantener / freeze
 ACTION_ROAM = "roam"                      # rotar a otra linea / al fight
@@ -55,10 +59,34 @@ ACTION_IGNORE_OBJECTIVE = "ignore_objective"  # no moverse al objetivo
 ACTION_CHECK_MAP = "check_map"            # revisar minimap / camara antes de comprometer
 
 ACTION_VOCAB = {
-    ACTION_FIGHT_ENTRY, ACTION_DISENGAGE, ACTION_PUSH_WAVE, ACTION_HOLD_WAVE,
+    ACTION_FIGHT_ENTRY, ACTION_DISENGAGE, ACTION_ATTRITION, ACTION_PUSH_WAVE, ACTION_HOLD_WAVE,
     ACTION_ROAM, ACTION_FARM_JUNGLE, ACTION_RESET, ACTION_VISION_SETUP,
     ACTION_IGNORE_OBJECTIVE, ACTION_CHECK_MAP,
 }
+
+# Un action_id es un identificador interno; cuando hay que ENSENARLO (la marca
+# historica de la card, por ejemplo) va en espanol. Un solo sitio para el mapa:
+# los consumidores importan `action_label_es`, no su propia tabla.
+ACTION_LABELS_ES = {
+    ACTION_FIGHT_ENTRY: "pelear / entrar",
+    ACTION_DISENGAGE: "retirarse / no pelear",
+    ACTION_ATTRITION: "desgaste intencional",
+    ACTION_PUSH_WAVE: "pushear la oleada",
+    ACTION_HOLD_WAVE: "mantener la oleada",
+    ACTION_ROAM: "rotar",
+    ACTION_FARM_JUNGLE: "farmear jungla",
+    ACTION_RESET: "volver a base",
+    ACTION_VISION_SETUP: "preparar visión",
+    ACTION_IGNORE_OBJECTIVE: "no ir al objetivo",
+    ACTION_CHECK_MAP: "revisar el mapa",
+}
+
+
+def action_label_es(action_id) -> str:
+    """Etiqueta legible de un action_id. Un id desconocido (vocabulario viejo,
+    conservado dentro de un fingerprint antiguo) se muestra tal cual."""
+    aid = str(action_id or "")
+    return ACTION_LABELS_ES.get(aid, aid)
 
 
 # ----------------------------------------------------------------- power index
@@ -124,7 +152,7 @@ def power_label(idx: Optional[float]) -> Optional[str]:
 # e.g. committing blind) + progressive (crossing a soft threshold, e.g. low HP).
 # Returns the score AND the breakdown so the UI can show WHY.
 _HEF_WEIGHTS = {"power": 0.35, "info": 0.30, "action_fit": 0.25, "wave": 0.10}
-_AGGRESSIVE_ACTIONS = {"fight_entry", "push_wave", "roam"}
+_AGGRESSIVE_ACTIONS = {"fight_entry", "push_wave", "roam", "attrition_trade"}
 _DEFENSIVE_ACTIONS = {"disengage", "reset", "hold_wave"}
 
 
@@ -170,6 +198,29 @@ def _wave_term(wave: dict, at_objective: bool = False) -> Optional[float]:
             "frozen_near_tower": 0.75, "under_tower": 0.8}.get(ws)
 
 
+def setup_blend(pi: Optional[float], it: Optional[float]) -> Optional[float]:
+    """El SETUP local 0..1: `0.3*info + 0.7*power` (alpha 0.3 desde el Ciclo 10).
+
+    Una sola definicion de la mezcla, compartida por `_commit_fit` (que la usa
+    para el termino action_fit del HEF) y por los detectores que derivan el EV de
+    sus opciones del mismo calculo de ventaja (#23). Con una sola senal presente
+    devuelve esa; sin ninguna, None."""
+    if it is not None and pi is not None:
+        return 0.3 * it + 0.7 * pi          # power carries more: see _commit_fit
+    if it is not None:
+        return it
+    if pi is not None:
+        return pi
+    return None
+
+
+def setup_score(state_features: Optional[dict]) -> Optional[float]:
+    """`setup_blend` calculado directamente desde un bloque `state_features`."""
+    sf = state_features or {}
+    return setup_blend(power_index(sf.get("power") or {}),
+                       _info_term(sf.get("info_risk") or {}))
+
+
 def _commit_fit(action_id, pi, it, objectives=None):
     """How well the action fits the SETUP — the player's real criterion.
 
@@ -189,13 +240,8 @@ def _commit_fit(action_id, pi, it, objectives=None):
     """
     if action_id is None:
         return None
-    if it is not None and pi is not None:
-        setup = 0.3 * it + 0.7 * pi          # power carries more: see docstring
-    elif it is not None:
-        setup = it
-    elif pi is not None:
-        setup = pi
-    else:
+    setup = setup_blend(pi, it)              # power carries more: see docstring
+    if setup is None:
         return None
     ov = (objectives or {}).get("objective_value")
     if action_id in _AGGRESSIVE_ACTIONS:
@@ -291,10 +337,19 @@ def hef_label(score: Optional[float]) -> Optional[str]:
 
 # --------------------------------------------------------------------- action
 def taken_index(options) -> Optional[int]:
-    """Index of the option the player actually took (via the label marker).
+    """Index of the option the player actually took.
+
+    Prefers the explicit `taken` flag (base.Option.taken). Falls back to the
+    label marker for rows persisted before the flag existed (their options_json
+    dicts have no `taken` key), so historical decisions keep resolving without a
+    migration.
 
     Accepts Option objects or plain dicts (parsed options_json) so callers that
     work on persisted rows (dashboard, backfill) share the same logic."""
+    for i, o in enumerate(options):
+        flag = o.get("taken") if isinstance(o, dict) else getattr(o, "taken", False)
+        if flag:
+            return i
     for i, o in enumerate(options):
         label = o.get("label") if isinstance(o, dict) else getattr(o, "label", "")
         if TAKEN_MARKER.search(label or ""):
@@ -325,6 +380,77 @@ def action_fingerprint(detector_id: str, action: Optional[dict], options) -> Opt
         return None
     ti = taken_index(options or [])
     return f"v1|{detector_id}|{','.join(ids)}|t{ti if ti is not None else '?'}"
+
+
+def _parse_fp(fp: Optional[str]):
+    """('det', [ids...], 'taken_token') de un fingerprint 'v1|det|a,b|t1', o None."""
+    if not fp:
+        return None
+    parts = fp.split("|")
+    if len(parts) != 4 or parts[0] != "v1":
+        return None
+    return parts[1], (parts[2].split(",") if parts[2] else []), parts[3]
+
+
+def fingerprint_compatible(stored_fp: Optional[str], detector_id: str,
+                           action: Optional[dict], options) -> bool:
+    """True si la marca guardada (stored_fp) sigue apuntando a la misma eleccion
+    en la encarnacion actual: fingerprint IDENTICO (caso de siempre), o el actual
+    EXTIENDE al guardado agregando action_ids AL FINAL con el mismo indice tomado.
+    La extension-por-el-final es segura porque los indices 0..n-1 no se mueven;
+    cualquier reordenamiento, renombre o cambio de tomada es incompatible."""
+    cur = action_fingerprint(detector_id, action, options)
+    if stored_fp is not None and stored_fp == cur:
+        return True
+    old, new = _parse_fp(stored_fp), _parse_fp(cur)
+    if old is None or new is None:
+        return False
+    old_det, old_ids, old_taken = old
+    new_det, new_ids, new_taken = new
+    return (old_det == new_det and old_taken == new_taken
+            and new_ids[:len(old_ids)] == old_ids and len(new_ids) >= len(old_ids))
+
+
+def fingerprint_action_ids(stored_fp: Optional[str]):
+    """Los action_ids DE ENTONCES, en orden, embebidos en el fingerprint guardado
+    ('v1|det|a,b|t1' -> ['a','b']). [] si el fingerprint falta o no parsea:
+    `user_best_option` es un indice contra esta lista, asi que sin ella la
+    eleccion original no se puede reconstruir."""
+    parsed = _parse_fp(stored_fp)
+    return list(parsed[1]) if parsed else []
+
+
+# ------------------------------------------------ vigencia de una marca (#25)
+# Veredictos de `mark_validity`. La regla vive AQUI y solo aqui: el learner
+# (_decision_feedback_pairs), la cola de revision y la card del dashboard la
+# llaman en vez de reimplementarla, para que no puedan discrepar sobre si una
+# marca sigue contando.
+MARK_VALID = "valid"                          # cuenta
+MARK_REVIVED = "revived"                      # cuenta; el gate viejo la habria matado
+MARK_STALE_OPTIONS_CHANGED = "options_changed"  # las opciones se movieron
+MARK_STALE_NO_FINGERPRINT = "no_fingerprint"  # sin fingerprint + marca anterior a la fila
+STALE_REASONS = (MARK_STALE_OPTIONS_CHANGED, MARK_STALE_NO_FINGERPRINT)
+
+
+def mark_validity(stored_fp: Optional[str], detector_id: str, action: Optional[dict],
+                  options, feedback_at_utc, created_at_utc) -> str:
+    """Uno de los cuatro veredictos de arriba para una marca por-decision.
+
+    Con fingerprint manda el CONTENIDO: si el conjunto de opciones sigue siendo
+    compatible la marca vale, aunque su timestamp sea anterior a la fila actual
+    (eso es `revived` — el 2026-06-10 el gate de timestamp a solas mato 192/192
+    marcas solo porque un re-analisis refresco todos los created_at). Sin
+    fingerprint no queda mas que ese gate conservador.
+    """
+    if stored_fp:
+        if not fingerprint_compatible(stored_fp, detector_id, action, options):
+            return MARK_STALE_OPTIONS_CHANGED
+        if feedback_at_utc and created_at_utc and feedback_at_utc < created_at_utc:
+            return MARK_REVIVED
+        return MARK_VALID
+    if feedback_at_utc and created_at_utc and feedback_at_utc < created_at_utc:
+        return MARK_STALE_NO_FINGERPRINT
+    return MARK_VALID
 
 
 def build_action(detector_id: str, options, action_ids: list[str]) -> dict:

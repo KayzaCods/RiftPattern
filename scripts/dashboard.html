@@ -135,9 +135,25 @@ function HefPanel({hef}){
 function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, domId, highlight}){
   const det = DET[d.detector] || {label:d.detector, acc:"#888"};
   const [note, setNote] = useState(d.feedback_note || "");
-  const [best, setBest] = useState(d.best_option==null ? null : d.best_option);
+  // Si la marca es HISTORICA (#25) el indice guardado apunta a un conjunto de
+  // opciones que ya no existe: pre-seleccionarlo pintaria "tu elección" sobre una
+  // opcion que el usuario nunca eligio. La eleccion real se muestra, resuelta
+  // contra la lista de entonces, en el bloque de marca historica.
+  const [best, setBest] = useState((d.best_option==null || d.historical_mark) ? null : d.best_option);
   const [markType, setMarkType] = useState(d.mark_type || null);
   const [saved, setSaved] = useState(false);
+  // Momento del intercambio (via HP del recorder): se pide PEREZOSO al abrir el
+  // clip de un trade (leer los snapshots de 50-100 MB en la ruta masiva colgaba
+  // el dashboard). Mientras no llega, el seek cae al inicio del minuto.
+  const [momentMs, setMomentMs] = useState(null);
+  const clipVidRef = useRef(null);
+  useEffect(() => {
+    if(!clipOpen || d.detector!=="trade_v1" || momentMs!=null) return;
+    fetch("/api/trade_moment?id="+d.id).then(r=>r.json())
+      .then(j => { if(j && j.moment_ms!=null){ setMomentMs(j.moment_ms);
+        const v=clipVidRef.current; const off=(d.clip_offset_s||0)+(j.moment_ms-d.game_time_ms)/1000-5;
+        if(v && off>0){ try{ v.currentTime=off; }catch(_){} } } }).catch(()=>{});
+  }, [clipOpen, d.id]);
   // Near-tie: when the top two options are within ~0.10 EV they're practically
   // equivalent — the system isn't really "recommending" one. Surfacing this stops
   // the user from marking "se equivoca" just for picking their own valid option.
@@ -162,6 +178,11 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
             style:{fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:3,padding:"2px 7px",borderRadius:"var(--border-radius-md)",
               color:`var(--color-text-${m.c})`, background:`var(--color-background-${m.c})`}},
             h(Ico,{name:m.ic,size:11}), m.t); })(),
+        // La marca esta guardada pero ya no cuenta: hay que verlo sin expandir.
+        d.historical_mark && h("span", {title:"Tu marca ya no entrena al learner: las opciones cambiaron. Expande para verla.",
+          style:{fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:3,padding:"2px 7px",borderRadius:"var(--border-radius-md)",
+            color:"var(--color-text-warning)", background:"var(--color-background-warning)"}},
+          h(Ico,{name:"alert",size:11}), "histórica"),
         d.reward_score!=null && h("span", {title:`reward ${d.reward_score>0?"+":""}${d.reward_score}`,
           style:{width:9,height:9,borderRadius:"50%",flexShrink:0,
             background:d.reward_score>0?"var(--color-text-success)":(d.reward_score<0?"var(--color-text-danger)":"#5a5a66")}}),
@@ -240,6 +261,41 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
           )
         )
       ),
+      // Marca HISTORICA (#25): la marca sigue guardada pero ya no entrena al
+      // learner porque el conjunto de opciones cambio bajo ella. Antes esto
+      // pasaba en silencio y la card la pintaba como si siguiera vigente.
+      d.historical_mark && (function(){
+        const hm = d.historical_mark;
+        const fbL = hm.feedback==="disagree" ? "se equivoca"
+                  : hm.feedback==="equivalent" ? "≈ equivalentes"
+                  : hm.feedback==="agree" ? "acierta" : "sin veredicto";
+        const mt = (MARK_TYPE_BTNS.find(m=>m.key===hm.mark_type)||{}).label;
+        return h("div", {style:{marginTop:14,padding:"10px 12px",
+            background:"var(--color-background-warning)",
+            border:"0.5px solid var(--color-text-warning)",
+            borderLeft:"3px solid var(--color-text-warning)",
+            borderRadius:"0 var(--border-radius-md) var(--border-radius-md) 0"}},
+          h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-warning)",marginBottom:6,display:"flex",alignItems:"center",gap:5}},
+            h(Ico,{name:"alert",size:12}), "Marca histórica — ya no entrena al learner"),
+          h("div", {style:{fontSize:11.5,lineHeight:1.6,color:"var(--color-text-secondary)",marginBottom:8}},
+            hm.reason==="options_changed"
+              ? "Las opciones de esta decisión cambiaron desde que la marcaste, así que tu elección apunta a un conjunto que ya no existe. La marca se conserva íntegra, pero no cuenta para calibrar los pesos. Para que vuelva a contar hay que marcarla de nuevo contra las opciones de arriba."
+              : "Esta marca es anterior a la versión actual de la decisión y no guarda registro de contra qué opciones se hizo, así que no se puede saber a cuál apuntaba. La marca se conserva íntegra, pero no cuenta para calibrar los pesos. Para que vuelva a contar hay que marcarla de nuevo contra las opciones de arriba."),
+          h("div", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",marginBottom:6}},
+            [hm.marked_at ? ("marcada el " + String(hm.marked_at).slice(0,10)) : "fecha desconocida",
+             "marcaste: " + fbL, mt ? ("tipo: " + mt) : null].filter(Boolean).join(" · ")),
+          hm.chosen_action_id && h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)",marginBottom:4}},
+            "Opción que elegiste entonces: ", h("strong",{}, hm.chosen_action_label||hm.chosen_action_id)),
+          hm.previous_action_ids && hm.previous_action_ids.length>0
+            ? h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)"}},
+                "Opciones de entonces: " + hm.previous_action_ids.join(" · "))
+            : h("div", {style:{fontSize:11.5,color:"var(--color-text-tertiary)"}},
+                "No se conservó registro de las opciones de entonces."),
+          hm.note && h("div", {style:{fontSize:12.5,lineHeight:1.6,color:"var(--color-text-primary)",
+              background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",
+              padding:"8px 10px",marginTop:8,whiteSpace:"pre-wrap"}}, hm.note)
+        );
+      })(),
       h("div", {style:{marginTop:14}},
         h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-info)",marginBottom:6}}, "Tu contexto y justificación"),
         best!=null && d.options[best] && h("div", {style:{fontSize:11,color:"var(--color-text-info)",marginBottom:6}},
@@ -261,6 +317,11 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
                 background:markType===m.key?"var(--color-background-tertiary)":"transparent",
                 border:markType===m.key?"0.5px solid var(--color-border-secondary)":"0.5px solid transparent"}},
               m.label))),
+        // Guia del tipo (feedback 2026-07-18: "mixta" ambigua con 2+ factores):
+        // para el sistema solo importa si fue decision PURA (es lo unico que
+        // entrena al learner); todo lo demas es equivalente entre si.
+        h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",margin:"4px 2px 0",lineHeight:1.5}},
+          "Solo «decisión» entrena al learner. Pregúntate: ¿con ejecución perfecta, la decisión seguía siendo mala? Sí → decisión · No → ejecución · Ambas → mixta (da igual cuántas cosas más fallaran)."),
         h("div", {style:{display:"flex",alignItems:"center",gap:10,marginTop:6,flexWrap:"wrap"}},
           (function(){
             const needsType = best!=null && !markType;
@@ -278,8 +339,8 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
           h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)"}}, "Se guarda en esta decisión, aparte del feedback A/B de Calibrar.")
         )
       ),
-      clipOpen && d.has_clip && h("video", {controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
-        onLoadedMetadata:(e)=>{ const off=(d.clip_offset_s||0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
+      clipOpen && d.has_clip && h("video", {ref:clipVidRef, controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
+        onLoadedMetadata:(e)=>{ const mo = momentMs!=null?momentMs:d.moment_ms; const off=(d.clip_offset_s||0)+(mo!=null?(mo-d.game_time_ms)/1000:0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
         onError:(e)=>{e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:12px;margin-top:8px">Clip no disponible en disco (ruta movida o eliminada).</div>');e.target.remove();}}),
       clipOpen && d.has_clip && d.clip_offset_s!=null && h("div",{className:"muted",style:{fontSize:11,marginTop:4,fontFamily:"var(--font-mono)"}},
         `clip @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")} · seek −5s para contexto`)
@@ -554,7 +615,7 @@ function CompareCard({d}){
       h(Ico,{name:"play",size:12}), clip?"Ocultar clip":`Ver clip${d.clip_offset_s!=null?` @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")}`:""}`),
     clip && d.has_clip && h("video", {controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
       style:{width:"100%",borderRadius:6,marginTop:6,maxHeight:240,background:"#000"},
-      onLoadedMetadata:(e)=>{ const off=(d.clip_offset_s||0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
+      onLoadedMetadata:(e)=>{ const off=(d.clip_offset_s||0)+(d.moment_ms!=null?(d.moment_ms-d.game_time_ms)/1000:0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
       onError:(e)=>{ e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:11px;margin-top:6px">Clip no disponible en disco.</div>'); e.target.remove(); }})
   );
 }
@@ -763,7 +824,7 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
                     fb:fbs[mo.id], onFb, clipOpen:clipId===mo.id, onClip:(id)=>setClipId(c=>c===id?null:id), onSave})
                 : h("div",{className:"muted",style:{fontSize:12,padding:"8px 0"}},"No encontré la decisión en memoria; recarga la página (F5)."),
               h("div", {style:{display:"flex",gap:10,alignItems:"center",margin:"8px 2px 4px",flexWrap:"wrap"}},
-                h("button", {onClick:()=>onJump({id:mo.id, match:mo.match, cohort:mo.cohort}), style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir en Decisiones (mapa y partida completa)"),
+                h("button", {onClick:()=>onJump({id:mo.id, match:mo.match, cohort:mo.cohort, t_ms:(mo.moment_ms!=null?mo.moment_ms:mo.game_time_ms)}), style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir en Decisiones (mapa y partida completa)"),
                 h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginLeft:"auto"}}, 'Marca o guarda contexto en la tarjeta: queda "completada"; abajo, "Traer nuevas" la cambia por otra.'))
             )
           );
@@ -777,6 +838,226 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
         : (data.exhausted
             ? h("div", {style:{textAlign:"center",margin:"14px 0 4px",fontSize:12,color:"var(--color-text-tertiary)"}}, "No quedan más momentos sin marcar en la cola.")
             : null))
+  );
+}
+
+// Cola de trades por informatividad (#5): trades PERDIDOS sin marcar, ordenados
+// por Fisher x cobertura (backend /api/trade_queue). Cada momento YA es la
+// decision enriquecida, asi que la card se pinta directo (no depende del filtro
+// de cohorte global). Misma mecanica inline que Sesion de hoy: marcar -> verde.
+// El server excluye las ya marcadas, asi que "Actualizar cola" las quita y re-ordena.
+const TRADE_ACCENT = "#38bdf8";
+function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
+  const [expId, setExpId] = useState(null);
+  const [clipId, setClipId] = useState(null);
+  // Tandas de 10: la lista completa de una abruma (feedback 2026-07-18); el
+  // "Mostrar mas" trae la siguiente tanda cuando el jugador quiere seguir.
+  const [limit, setLimit] = useState(10);
+  if(!data) return h("div", {style:{padding:"40px 0",textAlign:"center",color:"var(--color-text-tertiary)",fontSize:13}}, "Cargando cola de trades…");
+  const isDone = (id) => !!done[id] || !!fbs[id];
+  const total = data.total!=null ? data.total : data.moments.length;
+  const nDone = data.moments.filter(m=>isDone(m.id)).length;
+  const shown = data.moments.slice(0, limit);
+  return h("div", null,
+    h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
+      h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
+        `${total} trades perdidos sin marcar · `,
+        h("span", {style:{color: nDone>0 ? "#22c55e" : "var(--color-text-secondary)",fontWeight:600}},
+          `${nDone} marcado${nDone===1?"":"s"} en esta tanda`)),
+      h("button", {onClick:onRefresh, title:"Quita de la cola las que marcaste y re-ordena el resto por informatividad",
+        style:{...sBadge(false),fontSize:11,padding:"4px 10px"}}, "Actualizar cola")
+    ),
+    h("div", {style:{border:"0.5px solid rgba(56,189,248,0.35)",background:"rgba(56,189,248,0.07)",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:12,fontSize:12,lineHeight:1.5}},
+      "Orden = informatividad para el learner: cobertura por campeón × fase × banda de oro (en trade_v1 el Fisher es casi plano, así que domina la cobertura). ",
+      h("b", null, "Marca de arriba hacia abajo"),
+      " — cada marca cae donde más le enseña al BT y donde menos se apelotona. El criterio: cambiar daño solo con ventana (maná/cooldowns/posición); si no, respetar y farmear."),
+    data.moments.length===0
+      ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "No quedan trades sin marcar — campaña al día.")
+      : shown.map((mo,i) => {
+          const open = expId===mo.id;
+          const moDone = isDone(mo.id);
+          const bucket = mo.rank_why ? (mo.rank_why.split("·")[1]||"").trim() : "trade";
+          return h("div", {key:mo.id, id:"tq-"+mo.id, style:{marginBottom:8}},
+            h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
+              title: open ? "Cerrar" : (mo.rank_why||""),
+              style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",
+                border:"0.5px solid var(--color-border-tertiary)",
+                borderLeft:`3px solid ${moDone ? "#22c55e" : TRADE_ACCENT}`,
+                borderRadius: open ? "0 8px 0 0" : "0 8px 8px 0",
+                background: open ? "var(--color-background-tertiary)" : "var(--color-background-secondary)",
+                padding:"10px 12px", opacity: moDone && !open ? 0.65 : 1, cursor:"pointer"}},
+              h("div", {style:{fontSize:15,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",width:22,flexShrink:0}}, String(i+1)),
+              h("div", {style:{flex:1,minWidth:0}},
+                h("div", {style:{fontSize:12,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || "Trade perdido sin marcar"),
+                h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
+                  `${mo.champion} · ${mo.date} · ${mo.time}` + (mo.ev_gap!=null ? ` · gap EV ${mo.ev_gap.toFixed(2)}` : ""))
+              ),
+              moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid #22c55e55",background:"#22c55e14",color:"#22c55e",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
+              h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${TRADE_ACCENT}55`,background:`${TRADE_ACCENT}14`,color:TRADE_ACCENT,whiteSpace:"nowrap",flexShrink:0,fontFamily:"var(--font-mono)"}}, bucket),
+              h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})
+            ),
+            open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+              h(DecisionCard, {key:"tq-card-"+mo.id, d:mo, exp:true, onToggle:()=>setExpId(null),
+                fb:fbs[mo.id], onFb, clipOpen:clipId===mo.id, onClip:(id)=>setClipId(c=>c===id?null:id), onSave}),
+              h("div", {style:{display:"flex",gap:10,alignItems:"center",margin:"8px 2px 4px",flexWrap:"wrap"}},
+                h("button", {onClick:()=>onJump({id:mo.id, match:mo.match, cohort:mo.cohort, t_ms:(mo.moment_ms!=null?mo.moment_ms:mo.game_time_ms)}), style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir en Decisiones (mapa y partida completa)"),
+                h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginLeft:"auto"}}, 'Marca en la tarjeta: queda "completada". "Actualizar cola" la quita y trae las siguientes.'))
+            )
+          );
+        }),
+    data.moments.length>limit && h("button", {onClick:()=>setLimit(l=>l+10),
+      style:{...sBadge(false),width:"100%",padding:"10px",marginTop:6,fontSize:12,border:"0.5px solid var(--color-border-tertiary)"}},
+      `Mostrar 10 más (${data.moments.length-limit} restantes)`)
+  );
+}
+
+// Anchor set de exposicion (#17): la clave de respuestas para validar el
+// detector. Por cada muerte que marcaste en DESACUERDO, tu propia nota dice si
+// el error real fue estar expuesto ANTES de morir. Se juzga viendo el clip, no
+// de memoria (feedback 2026-07-22: el .md suelto no alcanzaba).
+// A CIEGAS a proposito: NO se muestra si exposure_v1 disparo ahi.
+const ANCHOR_BTNS = [
+  {key:"yes",    label:"Sí, fue exposición", color:"#22c55e"},
+  {key:"no",     label:"No, fue otra cosa",  color:"#ef4444"},
+  {key:"unsure", label:"Dudoso",             color:"#f59e0b"},
+];
+function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
+  const [expId, setExpId] = useState(null);
+  const [clipId, setClipId] = useState(null);
+  const [limit, setLimit] = useState(10);
+  if(!data) return h("div", {style:{padding:"40px 0",textAlign:"center",color:"var(--color-text-tertiary)",fontSize:13}}, "Cargando anchor set…");
+  const total = data.total || 0, done = data.n_marked || 0;
+  const shown = data.moments.slice(0, limit);
+  return h("div", null,
+    h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
+      h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
+        `${total} muertes que marcaste en desacuerdo · `,
+        h("span", {style:{color: done>0 ? "#22c55e" : "var(--color-text-secondary)",fontWeight:600}},
+          `${done}/${total} etiquetadas`)),
+      h("button", {onClick:onRefresh, title:"Recarga desde la base de datos",
+        style:{...sBadge(false),fontSize:11,padding:"4px 10px"}}, "Actualizar")
+    ),
+    h("div", {style:{border:`0.5px solid ${EXPOSURE_ACCENT}35`,background:`${EXPOSURE_ACCENT}0d`,borderRadius:"var(--border-radius-md)",padding:"10px 12px",marginBottom:12,fontSize:12,lineHeight:1.6}},
+      h("b", null, "¿El error real fue estar EXPUESTO (posición/visión) antes de morir?"),
+      " Abre la tarjeta, mira el clip y decide con lo que ves — no de memoria. Tu nota de entonces está arriba de cada caso.",
+      h("div", {style:{marginTop:6,color:"var(--color-text-tertiary)",fontSize:11}},
+        "Esto es la clave de respuestas para medir si exposure_v1 detecta lo correcto. Va a ciegas a propósito: no te digo si el detector disparó ahí, porque entonces tu juicio se anclaría en el suyo.")),
+    data.moments.length===0
+      ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "No hay muertes en desacuerdo con nota.")
+      : shown.map((mo,i) => {
+          const open = expId===mo.id;
+          const lab = mo.anchor_label;
+          const cur = ANCHOR_BTNS.find(b=>b.key===lab);
+          return h("div", {key:mo.id, style:{marginBottom:8}},
+            h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",
+                borderLeft:`3px solid ${cur ? cur.color : "var(--color-border-secondary)"}`,
+                borderRadius:"0 8px 8px 0", background:"var(--color-background-secondary)",
+                padding:"10px 12px", opacity: lab && !open ? 0.75 : 1}},
+              h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
+                style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer"}},
+                h("div", {style:{fontSize:15,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",width:22,flexShrink:0}}, String(i+1)),
+                h("div", {style:{flex:1,minWidth:0}},
+                  h("div", {style:{fontSize:12,marginBottom:2}}, mo.moment || "Muerte"),
+                  h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
+                    `${mo.champion} · ${mo.date} · ${mo.time}`)),
+                cur && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${cur.color}55`,background:`${cur.color}14`,color:cur.color,whiteSpace:"nowrap",flexShrink:0}}, cur.label),
+                h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})
+              ),
+              h("div", {style:{fontSize:12,color:"var(--color-text-secondary)",fontStyle:"italic",margin:"8px 0 6px",paddingLeft:32,lineHeight:1.5}},
+                "“", mo.feedback_note || "", "”"),
+              h("div", {style:{display:"flex",gap:6,paddingLeft:32,flexWrap:"wrap"}},
+                ...ANCHOR_BTNS.map(b =>
+                  h("button", {key:b.key, onClick:()=>onLabel(mo.id, lab===b.key ? null : b.key),
+                    style:{fontSize:11,padding:"5px 12px",borderRadius:"var(--border-radius-md)",cursor:"pointer",
+                      border:`0.5px solid ${lab===b.key ? b.color : "var(--color-border-tertiary)"}`,
+                      background: lab===b.key ? `${b.color}1f` : "transparent",
+                      color: lab===b.key ? b.color : "var(--color-text-tertiary)",
+                      fontWeight: lab===b.key ? 600 : 400}}, b.label))
+              )
+            ),
+            open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+              h(DecisionCard, {key:"as-card-"+mo.id, d:mo, exp:true, onToggle:()=>setExpId(null),
+                fb:fbs[mo.id], onFb:()=>{}, clipOpen:clipId===mo.id,
+                onClip:(id)=>setClipId(c=>c===id?null:id), onSave}),
+              h("div", {style:{display:"flex",gap:10,alignItems:"center",margin:"8px 2px 4px",flexWrap:"wrap"}},
+                h("button", {onClick:()=>onJump({id:mo.id, match:mo.match, cohort:mo.cohort, t_ms:mo.game_time_ms}),
+                  style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir en Decisiones (mapa y partida)"))
+            )
+          );
+        }),
+    data.moments.length>limit && h("button", {onClick:()=>setLimit(l=>l+10),
+      style:{...sBadge(false),width:"100%",padding:"10px",marginTop:6,fontSize:12,border:"0.5px solid var(--color-border-tertiary)"}},
+      `Mostrar 10 más (${data.moments.length-limit} restantes)`)
+  );
+}
+
+// Exposicion sin muerte (#17 Fase 1, REPORT-ONLY): estados en los que estabas
+// profundo y a ciegas SIN que te castigaran con muerte. death_v1 solo ve los que
+// terminan en muerte, asi que la fraccion SOBREVIVIDA es la senal nueva. Sin
+// marcado: esta fase existe para que el usuario juzgue la tasa de falsos positivos.
+const EXPOSURE_ACCENT = "#f97316";
+const EXPOSURE_MIN_MIAS = 2;      // refleja exposure.MIN_ENEMIES_UNSEEN
+const EXPOSURE_MAX_SR = 0.35;     // refleja exposure.MAX_SAFETY_RATIO
+function ExposureCard({data, onJump}){
+  const [open, setOpen] = useState(false);
+  if(!data || !data.aggregate) return null;
+  const a = data.aggregate;
+  if(!a.n) return null;
+  const dist = (obj) => Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);
+  return h("div", {style:{border:`0.5px solid ${EXPOSURE_ACCENT}55`,background:`${EXPOSURE_ACCENT}0d`,borderRadius:"var(--border-radius-md)",padding:"14px 16px",marginBottom:16}},
+    h("div", {style:{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}},
+      h("div", {style:{fontSize:13,fontWeight:600}}, "Exposición sin muerte"),
+      h("span", {style:{fontSize:10,padding:"2px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid #ef444455",background:"#ef44441f",color:"#ef4444"}}, "criterio NO validado")
+    ),
+    // Validado contra las 54 muertes que el jugador etiqueto (2026-07-22):
+    // recall 3%, AUC 0.477, p=0.725. El criterio mide profundidad en mapa; su
+    // "exposicion" pasa en su propia mitad (mediana safety_ratio 0.79). La
+    // tarjeta se queda como registro, pero NO puede presentar sus numeros como
+    // si midieran exposicion en su sentido.
+    h("div", {style:{border:"0.5px solid #ef444455",background:"#ef44440d",borderRadius:"var(--border-radius-md)",padding:"8px 10px",marginBottom:10,fontSize:11,lineHeight:1.6}},
+      h("b", null, "Este criterio no detecta lo que tú llamas exposición."),
+      " Medido contra tus 54 muertes etiquetadas: recall 3%, AUC 0.477, p=0.725 (azar). ",
+      "En tus muertes de exposición estabas en tu PROPIA mitad (mediana de profundidad 0.79); ",
+      "el criterio mide qué tan metido estás en campo enemigo. Los números de abajo describen ",
+      "el criterio, no tu conducta — no los leas como progreso."),
+    h("div", {style:{fontSize:12,color:"var(--color-text-secondary)",lineHeight:1.6,marginBottom:10}},
+      h("b", null, `${a.n} episodios`), ` (${a.per_match} por partida) que cumplen el criterio actual: `,
+      `profundidad <= ${EXPOSURE_MAX_SR} y ${EXPOSURE_MIN_MIAS}+ enemigos sin ver. `,
+      `${a.pct_survived}% sobrevivió, ${a.n_died} terminó en muerte.`,
+      a.n_frames!=null && h("span", {style:{color:"var(--color-text-tertiary)"}},
+        ` (${a.n_frames} frames-minuto crudos, ${a.frames_per_episode} por episodio: se cuenta el episodio, no el minuto, para no inflar el N).`)),
+    h("div", {style:{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)",marginBottom:8}},
+      h("div", null, "fase: " + dist(a.by_phase).map(([k,v])=>`${k} ${v}`).join(" · ")),
+      h("div", null, "oro: " + dist(a.by_gold_band).map(([k,v])=>`${k} ${v}`).join(" · ")),
+      h("div", null, "campeón: " + dist(a.by_champion).slice(0,4).map(([k,v])=>`${k} ${v}`).join(" · "))
+    ),
+    h("button", {onClick:()=>setOpen(o=>!o), style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}},
+      open ? "ocultar momentos" : `ver los ${data.shown} más severos (para juzgar falsos positivos)`),
+    open && h("div", {style:{marginTop:10,overflowX:"auto"}},
+      h("table", {style:{width:"100%",borderCollapse:"collapse",fontSize:11}},
+        h("thead", null, h("tr", {style:{color:"var(--color-text-tertiary)",textAlign:"left"}},
+          ...["campeón · fecha","min","dura","fase/oro","profundidad","MIAs","¿murió?","clip",""].map(x =>
+            h("th", {key:x, style:{padding:"4px 6px",borderBottom:"0.5px solid var(--color-border-tertiary)",fontWeight:400}}, x)))),
+        h("tbody", null, ...data.moments.map((m,i) =>
+          h("tr", {key:i, style:{borderBottom:"0.5px solid var(--color-border-tertiary)"}},
+            h("td", {style:{padding:"4px 6px"}}, `${m.champion} · ${m.date}`),
+            h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)"}}, m.time),
+            h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)"}},
+              m.duration_s ? `${m.duration_s}s` : "—"),
+            h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)"}}, `${m.phase}/${m.gold_band}`),
+            h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)"}}, m.safety_ratio!=null ? m.safety_ratio.toFixed(2) : "—"),
+            h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)"}}, String(m.enemies_unseen)),
+            h("td", {style:{padding:"4px 6px",color: m.died ? "var(--color-text-danger)" : "#22c55e"}},
+              m.died ? "murió" : "sobrevivió"),
+            h("td", {style:{padding:"4px 6px",color:"var(--color-text-tertiary)"}}, m.has_clip ? "sí" : "—"),
+            h("td", {style:{padding:"4px 6px"}},
+              onJump && h("button", {onClick:()=>onJump({id:null, match:m.match, cohort:m.cohort, t_ms:m.game_time_ms}),
+                style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir"))
+          )))
+      ),
+      h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginTop:6,lineHeight:1.5}},
+        "Report-only: no se marca ni se persiste nada. Si una fila NO te parece exposición real, es un falso positivo — con eso se calibran los umbrales antes de promover el detector.")
+    )
   );
 }
 
@@ -851,11 +1132,28 @@ function App(){
   const [vizMode, setVizMode] = useState("map");
   const [replay, setReplay] = useState(null);       // {available, in_match_start_s} del replay completo
   const replayRef = useRef(null);
+  // Momento (game_time_ms) al que buscar el replay tras un salto: el video de la
+  // partida carga async, asi que el seek queda pendiente hasta tener metadata.
+  // Sin esto, saltar desde Exposicion/colas dejaba el video en 0:00 y habia que
+  // buscar el frame a mano (feedback 2026-07-18).
+  const [pendingSeek, setPendingSeek] = useState(null);
   const [focusViz, setFocusViz] = useState(null);   // decision id focused (hover) in the map/timeline
   const [vizOpen, setVizOpen] = useState(null);     // decision expanded INLINE under the map/timeline
   const [queue, setQueue] = useState(null);         // cola de revisión (/api/review_queue)
   const [ingest, setIngest] = useState(null);       // salud del pipeline (/api/ingest_status, banner de key muerta)
   const [progress, setProgress] = useState(null);   // progreso conductual (#10, bloque progress de /api/patterns)
+  const [exposureData, setExposureData] = useState(null);   // Exposicion (#17 Fase 1, /api/exposure)
+  const [anchorData, setAnchorData] = useState(null);       // Anchor set (#17, /api/anchor_set)
+  const loadAnchors = () => fetch("/api/anchor_set").then(r=>r.json()).then(setAnchorData).catch(()=>{});
+  // Etiquetar es optimista: la fila se pinta al instante y el POST persiste por
+  // clave estable (sobrevive re-analisis). Sin recarga: la lista no debe saltar.
+  const setAnchorLabel = (id, label) => {
+    setAnchorData(d => d && ({...d,
+      moments: d.moments.map(x => x.id===id ? {...x, anchor_label: label} : x),
+      n_marked: d.moments.filter(x => x.id===id ? label : x.anchor_label).length}));
+    fetch("/api/anchor",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id, label})}).catch(()=>{});
+  };
   const [sessionData, setSessionData] = useState(null);  // Sesion de hoy (#16, /api/session)
   const [sessionDone, setSessionDone] = useState({});     // ids completados en la tanda actual (vive en App: sobrevive cambios de pestana)
   const sessionSeen = useRef(new Set());                  // ids mostrados en la tanda (incluye los ya dropeados) para no repetirlos al reemplazar
@@ -881,6 +1179,10 @@ function App(){
         setSessionData({...d, moments: [...keep, ...fresh], exhausted: fresh.length===0});
       }).catch(()=>{});
   };
+  const [tradeData, setTradeData] = useState(null);       // Cola de trades (#5, /api/trade_queue)
+  const [tradeDone, setTradeDone] = useState({});         // ids marcados en la tanda actual (verde hasta "Actualizar cola")
+  const loadTrade = () => fetch("/api/trade_queue").then(r=>r.json()).then(setTradeData).catch(()=>{});
+  const refreshTrade = () => { setTradeDone({}); loadTrade(); };  // el server ya excluye las marcadas
   const [jumpId, setJumpId] = useState(null);       // decisión destino de un salto (scroll + resaltado)
   const jumpRef = useRef(false);                    // suprime el reset de selMatch del cambio de cohort en un salto
   const loadQueue = () => fetch("/api/review_queue").then(r=>r.json()).then(setQueue).catch(()=>{});
@@ -894,6 +1196,7 @@ function App(){
     setAcc(prev => { if(prev!==targetAcc) jumpRef.current = true; return targetAcc; });
     setFdet("all"); setFbFilter("all"); setSort("recent");
     setSelMatch(t.match); setExp(t.id); setClipOpen(null); setLimit(500); setJumpId(t.id);
+    setPendingSeek(t.t_ms!=null ? t.t_ms : null);   // con momento: el replay busca ahi solo
   };
 
   useEffect(() => {
@@ -910,6 +1213,8 @@ function App(){
     }).catch(e => { setErr(String(e)); setLoading(false); });
     loadQueue();
     loadSession();
+    loadTrade();
+    loadAnchors();
     fetch("/api/ingest_status").then(r=>r.json()).then(setIngest).catch(()=>{});
   }, []);
 
@@ -918,6 +1223,7 @@ function App(){
     else { setSelMatch(null); }
     fetch("/api/patterns?cohort="+acc).then(r=>r.json())
       .then(d => { setPatterns(d.patterns||[]); setProgress(d.progress||null); }).catch(()=>{});
+    fetch("/api/exposure?cohort="+acc).then(r=>r.json()).then(setExposureData).catch(()=>{});
   }, [acc]);
 
   // Tras un salto, espera a que la card exista en el DOM y haz scroll hasta ella.
@@ -962,8 +1268,15 @@ function App(){
   const selectViz = (id) => {
     setVizOpen(id);
     const d = decisions.find(x=>x.id===id);
-    if(d) seekReplay(d.game_time_ms);
+    if(d) seekReplay(d.moment_ms!=null ? d.moment_ms : d.game_time_ms);
   };
+  // Consume el seek pendiente de un salto en cuanto el video tiene metadata
+  // (readyState>=1); si aun no la tiene, lo recoge onLoadedMetadata del video.
+  useEffect(() => {
+    if(pendingSeek==null) return;
+    const v = replayRef.current;
+    if(v && replay && v.readyState >= 1){ seekReplay(pendingSeek); setPendingSeek(null); }
+  }, [pendingSeek, replay]);
 
   const openDec = (id) => { setExp(id); setClipOpen(null); setLimit(l=>Math.max(l,500)); };
 
@@ -975,12 +1288,25 @@ function App(){
   const saveContext = (id, payload) => {
     fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({id, ...payload})}).catch(()=>{});
+    // Refleja el guardado en memoria: la card se desmonta al colapsar y al
+    // reabrir se reinicializa desde estos objetos — sin este patch la nota
+    // "desaparecia" de la UI aunque SI estaba en la DB (feedback 2026-07-18).
+    const patch = {};
+    if("note" in payload) patch.feedback_note = payload.note;
+    if("best_option" in payload) patch.best_option = payload.best_option;
+    if("mark_type" in payload) patch.mark_type = payload.mark_type;
+    setDecisions(ds => ds.map(x => x.id===id ? {...x, ...patch} : x));
+    setTradeData(td => (td && td.moments)
+      ? {...td, moments: td.moments.map(x => x.id===id ? {...x, ...patch} : x)} : td);
   };
   // Handlers de la Sesion de hoy: igual que los normales pero dejan el momento
   // como "completada" (la confirmacion no se pierde hasta pedir tanda nueva).
   const sessionFb = (id, v) => { setSessionDone(s=>({...s,[id]:true})); setFb(id, v); };
   const sessionSave = (id, payload) => { setSessionDone(s=>({...s,[id]:true})); saveContext(id, payload); };
   const newSession = () => { setSessionDone({}); loadSession(); };
+  // Handlers de la Cola de trades (#5): marcar deja el trade en verde en la tanda.
+  const tradeFb = (id, v) => { setTradeDone(s=>({...s,[id]:true})); setFb(id, v); };
+  const tradeSave = (id, payload) => { setTradeDone(s=>({...s,[id]:true})); saveContext(id, payload); };
   const toggleClip = (id) => setClipOpen(c => c===id ? null : id);
 
   // "both" = MIS cuentas: los cohorts de referencia (challenger) solo se ven al elegir su chip.
@@ -1036,6 +1362,8 @@ function App(){
     ),
     h("div", {style:{display:"flex",gap:4,marginBottom:16}},
       ...[{key:"session",label:"Sesión de hoy"},
+          {key:"trades",label: tradeData&&tradeData.total ? `Cola de trades (${tradeData.total})` : "Cola de trades"},
+          {key:"anchors",label: anchorData&&anchorData.total ? `Validar exposición (${anchorData.n_marked}/${anchorData.total})` : "Validar exposición"},
           {key:"decisions",label:"Decisiones"},{key:"patterns",label:"Patrones"},{key:"calibrate",label:"Calibrar"},
           {key:"review",label: queue&&queue.n_disagree ? `Revisión (${queue.n_disagree})` : "Revisión"}]
         .map(t => h("button", {key:t.key, onClick:()=>setTab(t.key), style:{...sBadge(tab===t.key),padding:"7px 14px",fontSize:13}}, t.label))
@@ -1095,7 +1423,8 @@ function App(){
                 // de tiempo busca ese momento en el video (5s antes para contexto).
                 replay && vizMode!=="winprob" && h("div", {style:{marginTop:8}},
                   h("video", {ref:replayRef, controls:true, preload:"metadata",
-                    src:"/replay?match="+encodeURIComponent(selMatch), style:{maxHeight:300}}),
+                    src:"/replay?match="+encodeURIComponent(selMatch), style:{maxHeight:300},
+                    onLoadedMetadata:()=>{ if(pendingSeek!=null){ seekReplay(pendingSeek); setPendingSeek(null); } }}),
                   h("div", {className:"muted", style:{fontSize:10,marginTop:2}},
                     "Replay de la partida — cada punto de la viz es una decisión; clic = saltar a ese momento del video")),
                 vizMode!=="winprob" && !vizOpen && h(VizAnnotation, {d:decisions.find(x=>x.id===focusViz), onOpen:selectViz}),
@@ -1122,8 +1451,13 @@ function App(){
     ),
     tab==="session" && h(SessionView, {data:sessionData, done:sessionDone, decisions, fbs,
       onFb:sessionFb, onSave:sessionSave, onJump:jumpTo, onRefresh:newSession, onMore:loadMoreSession}),
+    tab==="trades" && h(TradeQueueView, {data:tradeData, done:tradeDone, fbs,
+      onFb:tradeFb, onSave:tradeSave, onJump:jumpTo, onRefresh:refreshTrade}),
+    tab==="anchors" && h(AnchorSetView, {data:anchorData, fbs, onLabel:setAnchorLabel,
+      onSave:saveContext, onJump:jumpTo, onRefresh:loadAnchors}),
     tab==="patterns" && h("div", null,
       h(ProgressCard, {prog: progress}),
+      h(ExposureCard, {data: exposureData, onJump:jumpTo}),
       patterns.length===0
         ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "Sin patrones detectados para esta cuenta")
         : patterns.map(p => h(PatternCard, {key:p.id, p}))

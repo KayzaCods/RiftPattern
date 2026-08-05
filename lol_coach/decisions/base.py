@@ -11,6 +11,12 @@ class Option:
     label: str
     predicted_consequence: str
     ev_score: float  # 0..1, heuristic in Phase 1
+    # Which option the player actually took. Explicit flag: the old way was a regex
+    # over the label prose (features.TAKEN_MARKER), which chained the taken-marker
+    # to the wording and blocked rewriting the labels. Default False so every
+    # existing construction site keeps compiling; detectors set it on exactly one
+    # option.
+    taken: bool = False
 
 
 @dataclass

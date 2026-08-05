@@ -17,6 +17,13 @@ from lol_coach.decisions import features as F
 from lol_coach.decisions.base import Option
 
 
+class _TakenOpt:
+    """Opcion minima para fingerprint/taken_index: 'lo que hiciste' = tomada."""
+    def __init__(self, taken):
+        self.label = "lo que hiciste" if taken else "alternativa"
+        self.ev_score = 0.5
+
+
 # --------------------------------------------------------------- power_index
 def test_power_index_none_and_empty_return_none():
     assert F.power_index(None) is None
@@ -273,6 +280,51 @@ def test_action_fingerprint_none_when_no_action_or_actions():
     assert F.action_fingerprint("death_v1", {"available_actions": []}, [{"label": "x"}]) is None
 
 
+# --------------------------------------------------------- fingerprint_compatible
+def test_fingerprint_compatible_exact_match():
+    # El caso de siempre: fingerprint identico -> compatible.
+    action = {"available_actions": [{"action_id": "disengage"}, {"action_id": "fight_entry"}]}
+    options = [_TakenOpt(False), _TakenOpt(True)]   # taken = indice 1
+    fp = F.action_fingerprint("trade_v1", action, options)
+    assert F.fingerprint_compatible(fp, "trade_v1", action, options) is True
+
+
+def test_fingerprint_compatible_extension_at_the_end():
+    # La marca vieja: [disengage, fight_entry] t1. La nueva encarnacion agrega
+    # attrition_trade AL FINAL: el prefijo y el indice tomado se conservan.
+    old_fp = "v1|trade_v1|disengage,fight_entry|t1"
+    new_action = {"available_actions": [
+        {"action_id": "disengage"}, {"action_id": "fight_entry"}, {"action_id": "attrition_trade"}]}
+    new_options = [_TakenOpt(False), _TakenOpt(True), _TakenOpt(False)]
+    assert F.fingerprint_compatible(old_fp, "trade_v1", new_action, new_options) is True
+
+
+def test_fingerprint_incompatible_when_prefix_differs():
+    # Reordenar o renombrar ids NO es extension por el final -> incompatible.
+    old_fp = "v1|trade_v1|disengage,fight_entry|t1"
+    reordered = {"available_actions": [
+        {"action_id": "fight_entry"}, {"action_id": "disengage"}, {"action_id": "attrition_trade"}]}
+    options = [_TakenOpt(False), _TakenOpt(True), _TakenOpt(False)]
+    assert F.fingerprint_compatible(old_fp, "trade_v1", reordered, options) is False
+
+
+def test_fingerprint_incompatible_when_taken_moved():
+    # Mismo prefijo de ids pero el indice tomado cambio -> la marca ya no apunta
+    # a la misma eleccion -> incompatible.
+    old_fp = "v1|trade_v1|disengage,fight_entry|t1"
+    action = {"available_actions": [
+        {"action_id": "disengage"}, {"action_id": "fight_entry"}, {"action_id": "attrition_trade"}]}
+    options_taken0 = [_TakenOpt(True), _TakenOpt(False), _TakenOpt(False)]   # taken = 0
+    assert F.fingerprint_compatible(old_fp, "trade_v1", action, options_taken0) is False
+
+
+def test_fingerprint_compatible_none_stored_is_false():
+    # Sin fingerprint guardado no hay nada que revalidar aqui (el otro path del
+    # gate -por timestamp- decide); esta funcion responde False.
+    action = {"available_actions": [{"action_id": "disengage"}]}
+    assert F.fingerprint_compatible(None, "trade_v1", action, [_TakenOpt(True)]) is False
+
+
 # ------------------------------------------------------------- tower distances
 def test_nearest_tower_dist_none_inputs():
     assert F.nearest_ally_tower_dist(None, None, 100) is None
@@ -299,3 +351,22 @@ def test_nearest_enemy_tower_dist_uses_opposite_team():
 ])
 def test_obj_kind(monster, kind):
     assert F.obj_kind(monster) == kind
+
+
+# ------------------------------------------------------------- attrition_trade
+def test_attrition_trade_is_an_aggressive_action():
+    # Compromete danio: hereda las penalizaciones agresivas de action_fit
+    # (sin vision / jungla MIA / info baja), como fight_entry.
+    assert F.ACTION_ATTRITION == "attrition_trade"
+    assert F.ACTION_ATTRITION in F._AGGRESSIVE_ACTIONS
+
+
+def test_attrition_trade_action_fit_penalized_without_vision():
+    # Con 2+ enemigos sin ver, una accion agresiva pierde action_fit igual que
+    # fight_entry (misma rama de penalizacion).
+    sf = {"power": {}, "info_risk": {"enemies_unseen": 3, "safety_ratio": 0.3},
+          "wave_tempo": {"wave_state": "neutral"}}
+    af_fight = F.hef_score(sf, "fight_entry").get("terms", {}).get("action_fit")
+    af_attr = F.hef_score(sf, "attrition_trade").get("terms", {}).get("action_fit")
+    assert af_attr is not None and af_fight is not None
+    assert abs(af_attr - af_fight) < 1e-9   # misma clase agresiva -> mismo action_fit

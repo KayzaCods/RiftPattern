@@ -70,48 +70,87 @@ def persist_decisions(
 
     Feedback whose key does NOT reappear (a detector changed its triggers or
     timestamps — the trade_v2 / tempo retune already burned pairwise feedback
-    this way) CANNOT be preserved. It is dropped, and reported in the returned
-    stats so no caller loses it silently again. Policy: if you change WHAT a
-    detector triggers on or WHEN (its game_time_ms), bump its detector_id or
-    ship a key migration along with the change.
+    this way) cannot be reassociated with a live decision. It is no longer lost:
+    before being dropped from `decisions` it is archived verbatim into
+    `orphan_feedback` (note, mark, the options it was marked against, the moment
+    and the argument), and reported in the returned stats. Policy is unchanged:
+    if you change WHAT a detector triggers on or WHEN (its game_time_ms), bump
+    its detector_id or ship a key migration along with the change — the archive
+    is a safety net, not a substitute. Read it with scripts/orphan_feedback.py.
 
     Returns (n_decisions, feedback_stats) with feedback_stats =
-    {"kept": int, "dropped": int, "dropped_keys": [(detector_id, game_time_ms), ...]}
-    (dropped_keys capped at 10 for printing).
+    {"kept": int, "dropped": int, "orphaned": int,
+     "dropped_keys": [(detector_id, game_time_ms), ...]}
+    (dropped_keys capped at 10 for printing; "orphaned" is how many rows the
+    archive actually gained — re-analysing twice archives the same mark once.)
     """
     saved = {}
     for r in conn.execute(
         "SELECT detector_id, game_time_ms, user_feedback, user_feedback_note, "
         "user_best_option, user_feedback_at_utc, user_feedback_fingerprint, "
-        "user_mark_type "
+        "user_mark_type, options_json, moment, argument "
         "FROM decisions WHERE match_id = ? AND "
         "(user_feedback IS NOT NULL OR user_feedback_note IS NOT NULL "
         " OR user_best_option IS NOT NULL OR user_mark_type IS NOT NULL)",
         (match_id,),
     ):
         saved[(r["detector_id"], r["game_time_ms"])] = (
-            r["user_feedback"], r["user_feedback_note"],
-            r["user_best_option"], r["user_feedback_at_utc"],
-            r["user_feedback_fingerprint"], r["user_mark_type"],
+            (r["user_feedback"], r["user_feedback_note"],
+             r["user_best_option"], r["user_feedback_at_utc"],
+             r["user_feedback_fingerprint"], r["user_mark_type"]),
+            (r["options_json"], r["moment"], r["argument"]),
         )
     conn.execute("DELETE FROM decisions WHERE match_id = ?", (match_id,))
     kept = 0
     for d in decisions:
         new_id = insert_decision(conn, d)
-        fb = saved.pop((d.detector_id, d.game_time_ms), None)
-        if fb:
+        entry = saved.pop((d.detector_id, d.game_time_ms), None)
+        if entry:
             conn.execute(
                 "UPDATE decisions SET user_feedback=?, user_feedback_note=?, "
                 "user_best_option=?, user_feedback_at_utc=?, "
                 "user_feedback_fingerprint=?, user_mark_type=? "
                 "WHERE id=?",
-                (*fb, new_id),
+                (*entry[0], new_id),
             )
             kept += 1
+    orphaned = _archive_orphans(conn, match_id, saved)
     conn.commit()
     stats = {
         "kept": kept,
         "dropped": len(saved),
+        "orphaned": orphaned,
         "dropped_keys": sorted(saved.keys())[:10],
     }
     return len(decisions), stats
+
+
+def _archive_orphans(conn: sqlite3.Connection, match_id: str, saved: dict) -> int:
+    """Dump the feedback left unmatched into `orphan_feedback`. Returns rows added.
+
+    Runs inside persist_decisions' open transaction (the caller commits). INSERT
+    OR IGNORE against the UNIQUE key makes it idempotent: re-analysing the same
+    match repeatedly archives a given mark exactly once.
+    """
+    if not saved:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    for (detector_id, game_time_ms), (fb, ctx) in sorted(saved.items()):
+        feedback, note, best_option, at_utc, fingerprint, mark_type = fb
+        options_json, moment, argument = ctx
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO orphan_feedback (
+                match_id, detector_id, game_time_ms,
+                user_feedback, user_feedback_note, user_feedback_at_utc,
+                user_feedback_fingerprint, user_mark_type, user_best_option,
+                options_json, moment, argument, dropped_at_utc, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (match_id, detector_id, game_time_ms,
+             feedback, note, at_utc, fingerprint, mark_type, best_option,
+             options_json, moment, argument, now, "key_not_reemitted"),
+        )
+        added += cur.rowcount if cur.rowcount > 0 else 0
+    return added

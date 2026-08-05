@@ -91,14 +91,27 @@ These are the parts I'm most proud of:
   reinserts every decision. Human feedback is preserved by a stable key, and
   marks are validated by a semantic *fingerprint* of the option set rather than a
   brittle index or timestamp — so refactoring a detector doesn't silently throw
-  away months of labeling.
+  away months of labeling. When a detector genuinely stops firing where it used
+  to, the orphaned marks are *archived* rather than dropped: those notes are the
+  field evidence I diagnose the detectors with, and they're worth more than the
+  rows they were attached to. A mark that no longer matches the current options
+  still shows on the card — labeled as historical, resolved against the option
+  set it was actually made against — instead of quietly looking current.
+- **Options are stated from the prior context, never from the result.** Each
+  decision offers one real axis (fight or disengage, contest or concede), written
+  from what was knowable at that instant. Phrasing an option from the outcome is
+  outcome bias dressed as coaching, and it corrupts the preference model, which
+  is supposed to learn a criterion rather than a scoreboard.
 - **I/O separated from pure logic** in every detector (`_gather_facts` does all
   the database work; `_evaluate` is pure), which is what makes the criterion
   branches unit-testable without a database.
 - **Honest measurement.** Progress is reported with confidence intervals; when the
   intervals overlap, the verdict is "no distinguishable improvement yet" instead
-  of a cherry-picked win.
-- **176 characterization tests** pin the behavior as a safety net for criterion
+  of a cherry-picked win. The studies that back the criterion are built to
+  *refute* it: a pre-registered experiment sealed in git before it runs, and a
+  detector validated against an anchor set generated blind so my own labeling
+  can't be anchored to the system's answer.
+- **294 characterization tests** pin the behavior as a safety net for criterion
   refactors.
 
 ---
@@ -128,6 +141,10 @@ copy config.example.toml config.toml
 # tests
 .venv\Scripts\python.exe -m pytest
 ```
+
+The suite needs no network and no fixtures. On a fresh clone 28 of the 294 tests
+report as skipped: 27 import the dashboard (which reads `config.toml` at import
+time) and one needs a populated database.
 
 ---
 

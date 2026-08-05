@@ -43,6 +43,7 @@ from .features import (
     enemy_jungler_id,
     mmss,
     nearest_ally_tower_dist,
+    taken_index,
 )
 
 
@@ -461,6 +462,7 @@ def _build_options(
                 label=f"Sacrificarte por {obj} (lo que hiciste)",
                 predicted_consequence=f"Cambiaste tu vida por {obj}. Es buen trade si {obj} valía más que tu muerte en ese momento (oro, mapa, timers).",
                 ev_score=0.64,
+                taken=True,
             ),
             Option(
                 label=f"Llevarte {obj} y salir vivo",
@@ -484,6 +486,7 @@ def _build_options(
                 label="Acudiste a apoyar/salvar la pelea y cayó en contra (lo que hiciste)",
                 predicted_consequence="Decisión defendible — acudir a un aliado comprometido suele ser correcto; aquí la pelea ya no era ganable.",
                 ev_score=0.52,
+                taken=True,
             ),
         ]
 
@@ -500,6 +503,7 @@ def _build_options(
                 label="Tomaste el intercambio y lo perdiste (lo que hiciste)",
                 predicted_consequence="Entraste a una pelea de dos lados que terminó en tu contra.",
                 ev_score=0.42,
+                taken=True,
             ),
         ]
 
@@ -515,6 +519,7 @@ def _build_options(
                 label="Te retiraste tarde y te alcanzaron (lo que hiciste)",
                 predicted_consequence="Ibas de salida pero la persecución/gank te alcanzó por salir tarde o sin cobertura.",
                 ev_score=0.42,
+                taken=True,
             ),
         ]
 
@@ -526,6 +531,7 @@ def _build_options(
                 label="Engage que rindió (lo que hiciste)",
                 predicted_consequence="El play valió: kill/asistencia o tu equipo ganó la pelea (peeling/CC), aunque murieras." + unseen_desc,
                 ev_score=0.65,
+                taken=True,
             ),
             Option(
                 label="Retirarte / no pelear",
@@ -560,6 +566,7 @@ def _build_options(
             label="Permanecer/engage (lo que hiciste)",
             predicted_consequence=f"Pelea aparente {fighters_for}v{fighters_against}." + unseen_desc,
             ev_score=round(engage, 2),
+            taken=True,
         ),
         Option(
             label="Retirarte / disengage",
@@ -640,8 +647,11 @@ def _compose_argument(ctx: dict, options: list[Option]) -> str:
         td = ctx["top_damager"]
         lines.append(f"Quien más daño te hizo: {td['champion']} ({td['damage']} de daño).")
 
-    # Compare what you did (the "hiciste" option) with the recommended (highest EV).
-    taken = next((o for o in options if "hiciste" in o.label.lower()), None)
+    # Compare what you did with the recommended (highest EV). La opcion tomada sale
+    # del flag explicito (features.taken_index), no de buscar "hiciste" en el label:
+    # ese lookup por texto ataba la prosa del argumento a la redaccion de la opcion.
+    _ti = taken_index(options)
+    taken = options[_ti] if _ti is not None else None
     best = max(options, key=lambda o: o.ev_score) if options else None
     if taken and best and best.label != taken.label and best.ev_score > taken.ev_score:
         lines.append(

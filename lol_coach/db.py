@@ -207,6 +207,54 @@ CREATE TABLE IF NOT EXISTS preferences (
     a_key TEXT,
     b_key TEXT
 );
+
+-- Anchor set de exposicion (#17): para CADA muerte que el jugador marco en
+-- desacuerdo, si su propia nota afirma que el error real fue estar EXPUESTO
+-- antes de morir. Es la clave de respuestas contra la que se mide exposure_v1
+-- (recall y separabilidad); NO es feedback de una decision, por eso vive en su
+-- propia tabla y no toca `decisions` (Fase 1 sigue report-only).
+-- La PK es la clave ESTABLE (match|detector|game_time_ms), no el decision id:
+-- los ids cambian en cada re-analisis (DELETE+reinsert) y las etiquetas no
+-- deben perderse con ellos — misma leccion que preferences.a_key/b_key.
+CREATE TABLE IF NOT EXISTS exposure_anchors (
+    decision_key TEXT PRIMARY KEY,
+    label TEXT NOT NULL,              -- 'yes' | 'no' | 'unsure'
+    marked_at_utc TEXT NOT NULL
+);
+
+-- Archivo permanente del feedback que `persist_decisions` no puede reasociar
+-- (#19). Re-analizar borra y reinserta las decisiones de una partida; el
+-- feedback se rescata emparejando por la clave estable (detector_id,
+-- game_time_ms), y si un detector deja de emitir esa clave la fila desaparece
+-- con la nota que el usuario escribio a mano. Antes solo se contaba en
+-- stats["dropped"]; ahora se vuelca aqui ANTES de descartarla.
+-- Se guarda tambien options_json/moment/argument: sin las opciones contra las
+-- que se marco, `user_best_option` es un indice sin significado y la nota es
+-- ilegible fuera de contexto.
+CREATE TABLE IF NOT EXISTS orphan_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id TEXT NOT NULL,
+    detector_id TEXT NOT NULL,
+    game_time_ms INTEGER NOT NULL,
+    user_feedback TEXT,
+    user_feedback_note TEXT,
+    user_feedback_at_utc TEXT,
+    user_feedback_fingerprint TEXT,
+    user_mark_type TEXT,
+    user_best_option INTEGER,
+    options_json TEXT,
+    moment TEXT,
+    argument TEXT,
+    dropped_at_utc TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+-- Idempotencia: re-analizar dos veces la misma partida no duplica el archivo.
+-- COALESCE porque user_feedback_at_utc puede ser NULL (marca solo de tipo) y en
+-- SQLite dos NULL no colisionan en un UNIQUE — sin esto, una marca sin fecha se
+-- archivaria una vez por re-analisis.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orphan_feedback_key
+    ON orphan_feedback(match_id, detector_id, game_time_ms,
+                       COALESCE(user_feedback_at_utc, ''));
 """
 
 
