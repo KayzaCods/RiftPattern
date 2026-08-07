@@ -25,6 +25,106 @@ from conftest import insert_match
 _NOW = "2026-01-01T00:00:00Z"
 
 
+def test_query_matches_includes_own_participant_kda(conn):
+    insert_match(conn, "KDA", our_puuid="mine")
+    conn.execute(
+        "INSERT INTO participants (match_id, participant_id, puuid, team_id, "
+        "team_position, champion_name, win, kills, deaths, assists) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("KDA", 1, "mine", 100, "BOTTOM", "Jinx", 1, 7, 2, 11),
+    )
+    conn.commit()
+
+    matches = dashboard.query_matches(conn)
+
+    assert len(matches) == 1
+    assert matches[0]["match_id"] == "KDA"
+    assert matches[0]["kills"] == 7
+    assert matches[0]["deaths"] == 2
+    assert matches[0]["assists"] == 11
+
+
+def _decision(conn, match_id, detector, t_ms, ctx=None):
+    conn.execute(
+        "INSERT INTO decisions (match_id, detector_id, game_time_ms, context_json, "
+        "options_json, argument, created_at_utc) VALUES (?,?,?,?,?,?,?)",
+        (match_id, detector, t_ms, json.dumps(ctx or {}), "[]", "", _NOW),
+    )
+
+
+def test_query_matches_detector_counts_suman_decisions_count(conn):
+    """Los 4 conteos comparten el JOIN, asi que heredan la exclusion de
+    `positive_trade`. Si se contaran aparte, el trade ganado entraria en el
+    conteo del detector pero no en decisions_count y la fila mostraria una
+    distribucion que no suma."""
+    insert_match(conn, "M1", our_puuid="mine")
+    _decision(conn, "M1", "death_v1", 100)
+    _decision(conn, "M1", "death_v1", 200)
+    _decision(conn, "M1", "objective_readiness_v1", 300)
+    _decision(conn, "M1", "trade_v1", 400)
+    _decision(conn, "M1", "tempo_v1", 500)
+    _decision(conn, "M1", "trade_v1", 600, {"positive_trade": True})  # excluido
+    conn.commit()
+
+    m = dashboard.query_matches(conn)[0]
+
+    assert m["detector_counts"] == {
+        "death_v1": 2, "objective_readiness_v1": 1, "trade_v1": 1, "tempo_v1": 1,
+    }
+    assert sum(m["detector_counts"].values()) == m["decisions_count"] == 5
+
+
+def test_query_matches_expone_rol_y_game_start_crudo(conn):
+    insert_match(conn, "R1", our_puuid="mine")
+    conn.execute("UPDATE matches SET game_start_ms=1730000000000 WHERE match_id='R1'")
+    conn.execute(
+        "INSERT INTO participants (match_id, participant_id, puuid, team_id, "
+        "team_position, champion_name, win) VALUES (?,?,?,?,?,?,?)",
+        ("R1", 1, "mine", 100, "UTILITY", "Sona", 1),
+    )
+    conn.commit()
+
+    m = dashboard.query_matches(conn)[0]
+
+    assert m["role"] == "UTILITY"
+    # Crudo: la fecha formateada no sirve para calcular antiguedad en el front.
+    assert m["game_start_ms"] == 1730000000000
+
+
+def test_partida_sin_decisiones_conserva_rol_y_ficha(conn):
+    """Una partida puede no tener ni una decision. El rol sale del participante,
+    no de las decisiones, asi que la fila sigue siendo reconocible."""
+    insert_match(conn, "VACIA", our_puuid="mine")
+    conn.execute(
+        "INSERT INTO participants (match_id, participant_id, puuid, team_id, "
+        "team_position, champion_name, win, kills, deaths, assists) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("VACIA", 1, "mine", 100, "JUNGLE", "Belveth", 0, 3, 8, 4),
+    )
+    conn.commit()
+
+    m = dashboard.query_matches(conn)[0]
+
+    assert m["decisions_count"] == 0
+    assert sum(m["detector_counts"].values()) == 0
+    assert m["role"] == "JUNGLE"
+    assert m["champion"] == "Belveth"
+    assert m["win"] is False
+    assert (m["kills"], m["deaths"], m["assists"]) == (3, 8, 4)
+
+
+def test_partida_antigua_sin_team_position_no_rompe(conn):
+    insert_match(conn, "VIEJA", our_puuid="mine")
+    conn.execute(
+        "INSERT INTO participants (match_id, participant_id, puuid, team_id, "
+        "team_position, champion_name, win) VALUES (?,?,?,?,?,?,?)",
+        ("VIEJA", 1, "mine", 100, None, "Sona", 1),
+    )
+    conn.commit()
+
+    assert dashboard.query_matches(conn)[0]["role"] == "—"
+
+
 def _death(conn, match_id, t_ms, action_class, power_index):
     ctx = {"inferred_action_class": action_class,
            "state_features": {"power": {"power_index": power_index}}}

@@ -1,4 +1,4 @@
-# lol-coach — Architecture
+# RiftPattern — Architecture
 
 A behavioral coaching engine for League of Legends. It ingests my own ranked
 games, detects the *decision points* inside each one, evaluates the choice that

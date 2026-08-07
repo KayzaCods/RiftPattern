@@ -1,0 +1,178 @@
+{
+  "patch": "26.10",
+  "ddragon_version": "16.10.1",
+  "source": "https://wiki.leagueoflegends.com/en-us/V26.10",
+  "champions_changed": [
+    {
+      "name": "Ambessa",
+      "type": "adjust",
+      "changes": [
+        "Cunning Sweep: Target health ratio 2/2.25/2.5/2.75/3% (from 1/1.5/2/2.5/3%)",
+        "Cunning Sweep: Bonus monster damage 75 (from 125)",
+        "Public Execution: Healing 15/17.5/20% (from 10/12.5/15%)",
+        "Public Execution: Monster healing 25% (from 40%)"
+      ]
+    },
+    {
+      "name": "Anivia",
+      "type": "nerf",
+      "changes": [
+        "Base armor 19 (from 21)",
+        "Armor growth 4.1 (from 4.5)"
+      ]
+    },
+    {
+      "name": "Ashe",
+      "type": "nerf",
+      "changes": [
+        "Ranger's Focus: AD ratio 110/115/120/125/130% (from 110/117.5/125/132.5/140%)"
+      ]
+    },
+    {
+      "name": "Galio",
+      "type": "adjust",
+      "changes": [
+        "Winds of War: Mana cost 60/65/70/75/80 (from 70/75/80/85/90)",
+        "Justice Punch: Base damage 100/135/170/205/240 (from 90/130/170/210/250)",
+        "Justice Punch: AP ratio 100% (from 90%)",
+        "Hero's Entrance: Damage scales with 100% bonus MR (new)"
+      ]
+    },
+    {
+      "name": "Lee Sin",
+      "type": "adjust",
+      "changes": [
+        "Safeguard: Base shield 60/105/150/195/240 (from 70/115/160/205/250)",
+        "Safeguard: Cooldown 7s (from 12s); removed 50% CDR on ally target",
+        "Safeguard: Targeting minion/ward grants shield (new)",
+        "Tempest: AD ratio 90% (from 100%)",
+        "Dragon's Rage: Target corpse knocked back on kill (new)"
+      ]
+    },
+    {
+      "name": "Naafiri",
+      "type": "nerf",
+      "changes": [
+        "Darkin Daggers: Bleed damage 30/42.5/55/67.5/80 (from 30/45/60/75/90)",
+        "Hounds' Pursuit: Base damage 150/225/300 (from 150/250/350)",
+        "Hounds' Pursuit: Per packmate damage 15/22.5/30 (from 15/25/35)"
+      ]
+    },
+    {
+      "name": "Quinn",
+      "type": "buff",
+      "changes": [
+        "Harrier: 50 bonus physical damage vs monsters (new)",
+        "Blinding Assault: Monster damage 150% (from 100%)",
+        "Behind Enemy Lines: Mana cost 50/25/0 (from 100/50/0)"
+      ]
+    },
+    {
+      "name": "Sejuani",
+      "type": "adjust",
+      "changes": [
+        "Power shifted from jungle to top; better early power; bruiser playstyle"
+      ]
+    },
+    {
+      "name": "Shyvana",
+      "type": "nerf",
+      "changes": [
+        "Base HP growth 95 (from 100)",
+        "Inferno Aegis: Cooldown 13/12.25/11.5/10.75/10 (from 13/12/11/10/9)",
+        "Inferno Aegis: Base shield 60/80/100/120/140 (from 75/95/115/135/155)"
+      ]
+    },
+    {
+      "name": "Smolder",
+      "type": "nerf",
+      "changes": [
+        "Super Scorcher Breath: Base damage 60/75/90/105/120 (from 65/80/95/110/125)",
+        "Achooo!: Explosion bonus AD ratio 50% (from 65%)"
+      ]
+    },
+    {
+      "name": "Wukong",
+      "type": "buff",
+      "changes": [
+        "Warrior Trickster: Clone damage 40/45/50/55/60% (from 30/35/40/45/50%)",
+        "Warrior Trickster: Clone duration 4s (from 3.25s)",
+        "Nimbus Strike: Bonus attack speed 40/45/50/55/60% (from 35/40/45/50/55%)"
+      ]
+    },
+    {
+      "name": "Zed",
+      "type": "nerf",
+      "changes": [
+        "Contempt for the Weak: 5/7.5/10% max HP (from 6/8/10%)",
+        "Shadow Slash: Base damage 70/92.5/115/137.5/160 (from 70/95/120/145/170)",
+        "Shadow Slash: Bonus AD ratio 70% (from 80%)"
+      ]
+    },
+    {
+      "name": "Zeri",
+      "type": "buff",
+      "changes": [
+        "Burst Fire: Bonus AD 60% excess bonus AS (from 50%)",
+        "Burst Fire: Total base damage 22/26/30/34/38 (from 21/24/27/30/33)"
+      ]
+    }
+  ],
+  "items_changed": [
+    {
+      "name": "Doran's Bow",
+      "type": "buff",
+      "changes": [
+        "AD 8 (from 6)"
+      ]
+    },
+    {
+      "name": "Doran's Helm",
+      "type": "buff",
+      "changes": [
+        "Health 140 (from 110)"
+      ]
+    },
+    {
+      "name": "Gluttonous Greaves",
+      "type": "adjust",
+      "changes": [
+        "Total cost 1000 (from 950)",
+        "Slay omnivamp/stack 0.6% (from 1%)",
+        "Slay max stacks 10 (from 6)"
+      ]
+    },
+    {
+      "name": "Immortal Path",
+      "type": "adjust",
+      "changes": [
+        "Slay omnivamp/stack 0.6% (from 1%)",
+        "Slay max stacks 10 (from 6)"
+      ]
+    },
+    {
+      "name": "Lich Bane",
+      "type": "buff",
+      "changes": [
+        "Movement speed 6% (from 4%)",
+        "Spellblade AP ratio 45% (from 40%)"
+      ]
+    },
+    {
+      "name": "Voltaic Cyclosword",
+      "type": "adjust",
+      "changes": [
+        "Total cost 3000 (from 2900)",
+        "Combine cost 963 (from 863)"
+      ]
+    }
+  ],
+  "systems": [
+    "Disruptive Game Termination: New vote system to end match vs severely disruptive player",
+    "Minion Aggro: Removed priority change when enemy attacks allied minion",
+    "Deathfire Touch (rune): Base damage/tick 1.5-6 (from 2-6)",
+    "Stormraider's Surge (rune): Duration 4s (from 3s); MS 48%/36% melee/ranged (from 40%/30%)",
+    "Viktor ARAM: Damage modifiers normalized to 0%; evolution stack rate adjusted",
+    "Essence Emporium: May 13 - June 10 2026"
+  ]
+}

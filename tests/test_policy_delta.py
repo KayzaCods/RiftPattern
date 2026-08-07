@@ -1,8 +1,7 @@
-"""Tests del policy delta (#14): IC de Jeffreys + distribucion de accion.
+"""Tests del policy delta vs el jugador de referencia (#14): IC de Jeffreys + distribucion de accion.
 
-El eje es comparar QUE accion elijo yo vs el jugador de referencia en setup de
-objetivo, con n chico por bucket (~118 decisiones de la referencia). Wald falla
-en ese regimen; se usa
+El eje es comparar QUE accion elijo yo vs el jugador de referencia en setup de objetivo, con n
+chico por bucket (la referencia ~118 decisiones). Wald falla en ese regimen; se usa
 Jeffreys (Beta(1/2,1/2) por categoria). La pieza que hay que clavar es el cuantil
 de la Beta sin scipy: beta incompleta regularizada + biseccion.
 """

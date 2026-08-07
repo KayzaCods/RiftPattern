@@ -1,13 +1,13 @@
-"""Policy delta vs el jugador de referencia (#14, redirigido): ¿en QUE divergimos?
+"""Policy delta vs el jugador de referencia (#14, redirigido): ¿en QUE decision divergimos?
 
 exposure_v1 falsifico la hipotesis POSICIONAL (mis muertes de exposicion pasan
 en mi propia mitad). Un estudio de 560k partidas dice por que: el combate
 individual es plano entre tiers; lo que separa Master de Challenger es la vision
 y la conducta forward-looking. Asi que #14 se compara en el eje que SI mueve el
 tier: la distribucion de la ACCION elegida en setup de objetivo, mis cuentas vs
-el jugador de referencia (cohorte challenger), no la profundidad en el mapa.
+el jugador de referencia (one-trick), no la profundidad en el mapa.
 
-Con n chico por bucket (~118 decisiones de objetivo de la referencia), Wald da
+Con n chico por bucket (~118 decisiones de objetivo del jugador de referencia), Wald da
 intervalos poco fiables; se usa Jeffreys (Beta(1/2,1/2) por categoria), cuyo
 cuantil se computa a mano (beta incompleta regularizada + biseccion, stdlib).
 Es fuente de HIPOTESIS con n declarado, no de verdad.

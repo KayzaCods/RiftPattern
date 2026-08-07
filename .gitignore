@@ -13,10 +13,15 @@ config.toml
 # player_model.md, …) and those contain personal notes and match history. An
 # allowlist would have to be updated every time a script is added; this cannot
 # be forgotten.
-/data/
 
 # OS / editor
 .vscode/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Excepcion acotada: el catalogo publico de Data Dragon (campeones, objetos,
+# runas, hechizos). No contiene nada del jugador y las pruebas del descargador
+# de iconos lo necesitan. Todo lo demas bajo /data/ sigue denegado.
+/data/*
+!/data/game_data/

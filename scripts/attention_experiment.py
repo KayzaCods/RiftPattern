@@ -1,8 +1,8 @@
 """Etapa 1 del experimento de atencion PRE-REGISTRADO (#13).
 
 Pre-registro sellado en git ANTES de correr esto: hipotesis, senal primaria,
-ventana, alfa, estratos y regla de paro quedaron fijados de antemano y no se
-tocan segun el resultado. Sin ese sello previo el pre-registro no vale.
+direccion esperada, ventana, alpha, estratos y regla de parada fijados de
+antemano. Sin ese sellado previo el pre-registro no vale.
 
 Pregunta: ¿hay MENOS consultas de marcador (Tab) en los 30 s previos a las
 muertes que el jugador atribuye a EXPOSICION, una vez controlado el estado de
@@ -121,8 +121,9 @@ def build(conn) -> tuple[str, dict]:
                   f"sobre >= 25 anclas frescas.")
 
     out = ["# Experimento de atención — Etapa 1 (refutación)", ""]
-    out.append("> Pre-registro (hipótesis, señal primaria, ventana, α, estratos y "
-               "regla de paro) sellado en git ANTES de correr esto.")
+    out.append("> Pre-registro sellado en git ANTES de correr esto: hipótesis, "
+               "señal primaria, dirección esperada, ventana, alpha y estratos "
+               "fijados de antemano.")
     out.append("> Estos son los mismos datos que generaron la hipótesis: esta etapa "
                "**solo puede refutar**, nunca confirmar.")
     out.append("")

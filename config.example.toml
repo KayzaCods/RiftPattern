@@ -27,9 +27,9 @@ cohort = "platinum"
 
 [paths]
 # Where the recorder writes raw JSONs from Live Client polling.
-data_raw = "D:/projects/lol-coach/data/raw"
+data_raw = "D:/projects/RiftPattern/data/raw"
 # Where the SQLite DB lives.
-sqlite_db = "D:/projects/lol-coach/data/lol_coach.db"
+sqlite_db = "D:/projects/RiftPattern/data/lol_coach.db"
 # Folders to scan for Replays.lol .mp4 clips. List form because Replays.lol
 # can revert its storage path back to the legacy Windows default
 # (C:/Users/<user>/Videos/Overwolf/Replays.lol) on its own. Including both

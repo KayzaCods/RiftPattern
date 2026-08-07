@@ -3,59 +3,444 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lol-coach</title>
+<title>RiftPattern</title>
 <style>
+/* identidad-nocturna · escena: panel · topologia: 2 zonas (navegacion + contenido)
+ * tono: instrumental con voz de ensayo · acento: azul carbon + acentos de detector propios
+ * critica: F5 J4 E4 Es5 R4 V4
+ * Capas OKLCH del preset "Oscuro azul afinado" (theme-lab). Los acentos de dominio
+ * se conservan en su hex exacto: son valores elegidos a mano, no derivables. */
 :root{
-  --color-text-primary:#e8e8ea;
-  --color-text-secondary:#b6b6bd;
-  --color-text-tertiary:#85858f;
-  --color-text-success:#28b487;
-  --color-text-danger:#e85b5a;
-  --color-text-info:#4a9be8;
-  --color-text-warning:#ef9f27;
-  --color-background-primary:#0e0e11;
-  --color-background-secondary:#17171b;
-  --color-background-tertiary:#202027;
-  --color-background-success:rgba(40,180,135,0.13);
-  --color-background-danger:rgba(232,91,90,0.13);
-  --color-background-info:rgba(74,155,232,0.14);
-  --color-background-warning:rgba(239,159,39,0.13);
-  --color-border-secondary:#3a3a44;
-  --color-border-tertiary:#26262d;
-  --border-radius-md:6px;
-  --border-radius-lg:10px;
-  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  /* --- capas --- */
+  --bg:        oklch(15.2% 0.010 264);   /* raiz: azul carbon casi negro */
+  --surface:   oklch(19.9% 0.011 261);   /* tarjeta / panel */
+  --elevated:  oklch(24.0% 0.012 260);   /* celda interior, fila activa */
+  --sunken:    oklch(11.5% 0.012 258);   /* pozo profundo: mapas, video, clips */
+  /* Superficie de los controles hundidos (opciones, campos de texto). Iban en
+     --sunken, la capa de los pozos de VISUALIZACION, donde el negro casi puro
+     tiene sentido porque el mapa y el video son pantallas. Dentro de un panel
+     (19.9%) esa capa cae 8 puntos y se lee como un agujero negro; esta se hunde
+     lo justo para separarse del panel sin abrirle un pozo. */
+  --inset:     oklch(16.8% 0.011 261);
+
+  /* --- tinta --- */
+  --ink:       oklch(90.0% 0.005 264);
+  --ink-soft:  oklch(74.0% 0.012 258);
+  --ink-faint: oklch(62.0% 0.014 258);
+
+  /* --- hairlines --- */
+  --hairline:        oklch(29.5% 0.012 262);
+  --hairline-strong: oklch(40.0% 0.014 262);
+
+  /* --- acentos de detector (propios, sin tocar) --- */
+  --det-death:     #E24B4A;
+  --det-trade:     #EF9F27;
+  --det-tempo:     #378ADD;
+  --det-objective: #1D9E75;
+  --pit-dragon:    #c97a3a;   /* foso de Dragon; tambien lo experimental/no validado */
+  --pit-baron:     #8a5fc0;   /* foso de Baron; tambien la variedad/anti-monocultivo */
+
+  /* --- senales de estado --- */
+  --signal-ok:   #2fb98d;   /* acierta, completado, ventaja */
+  --signal-bad:  #e85b5a;   /* se equivoca, desventaja, error */
+  --signal-warn: #EF9F27;   /* aviso, pendiente (mismo ambar que trade, a proposito) */
+  --signal-nav:  #4a9be8;   /* seleccion, tu razonamiento, enlaces */
+
+  /* --- mapa y visualizaciones --- */
+  --map-river:     oklch(30% 0.035 235);
+  --map-lane:      oklch(23% 0.040 225);
+  --map-blue-base: oklch(48% 0.145 255);
+  --map-red-base:  oklch(48% 0.160 28);
+
+  /* --- fondos tintados (13-14%: legibles sobre --surface) --- */
+  --wash-ok:   rgba(47,185,141,0.13);
+  --wash-bad:  rgba(232,91,90,0.13);
+  --wash-nav:  rgba(74,155,232,0.14);
+  --wash-warn: rgba(239,159,39,0.13);
+  --video-black:oklch(4% 0.005 264);
+
+  /* --- escala tipografica, ratio 1.16 sobre base 14 --- */
+  --t-micro: 10.4px;   --t-xs:   12.1px;   --t-sm:   13.0px;
+  --t-base:  14.0px;   --t-md:   16.2px;   --t-lg:   18.8px;
+  --t-xl:    21.9px;   --t-2xl:  25.3px;   --t-ghost: 56px;
+
+  /* --- ritmo --- */
+  --s1:4px; --s2:6px; --s3:8px; --s4:12px; --s5:16px; --s6:24px; --s7:36px;
+  --radius-sm:4px; --radius-md:8px; --radius-lg:10px;   /* chip / control / panel */
+  --nav-w:212px; --content-max:1180px;
+
+  --font-ui:"Aptos","IBM Plex Sans","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-display:"Bahnschrift","Space Grotesk","IBM Plex Sans","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+
+  /* --- alias de compatibilidad ---------------------------------------------
+   * Los estilos inline heredados leen estos nombres. Redefinirlos aqui hace que
+   * toda la UI adopte la paleta nueva sin editar los literales; se van retirando
+   * conforme cada componente pasa a las recetas de abajo. */
+  --color-text-primary:var(--ink);
+  --color-text-secondary:var(--ink-soft);
+  --color-text-tertiary:var(--ink-faint);
+  --color-text-success:var(--signal-ok);
+  --color-text-danger:var(--signal-bad);
+  --color-text-info:var(--signal-nav);
+  --color-text-warning:var(--signal-warn);
+  --color-background-primary:var(--bg);
+  --color-background-secondary:var(--surface);
+  --color-background-tertiary:var(--elevated);
+  --color-background-success:var(--wash-ok);
+  --color-background-danger:var(--wash-bad);
+  --color-background-info:var(--wash-nav);
+  --color-background-warning:var(--wash-warn);
+  --color-border-secondary:var(--hairline-strong);
+  --color-border-tertiary:var(--hairline);
+  --border-radius-md:var(--radius-md);
+  --border-radius-lg:var(--radius-lg);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--color-background-primary);color:var(--color-text-primary);
-  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
-body{padding:24px;max-width:1020px;margin:0 auto}
+html,body{background:var(--bg);color:var(--ink);overflow-x:clip;
+  font-family:var(--font-ui);
+  font-size:var(--t-base);line-height:1.5;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums}
+body{margin:0}
 button{cursor:pointer;font-family:inherit;background:transparent;border:none;outline:none;color:inherit}
-button:focus-visible{box-shadow:0 0 0 2px var(--color-border-secondary)}
-video{width:100%;border-radius:var(--border-radius-md);background:#000;margin-top:10px;max-height:420px}
+:where(button,a,input,textarea,select,[tabindex]):focus-visible{
+  outline:2px solid var(--signal-nav);outline-offset:1px;border-radius:var(--radius-sm)}
+button:focus-visible{box-shadow:none}
+video{width:100%;border-radius:var(--radius-md);background:var(--video-black);margin-top:10px;max-height:420px}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
-.muted{color:var(--color-text-tertiary)}
+.muted{color:var(--ink-faint)}
+
+/* ============================ recetas ============================ */
+
+/* -- rotulos --
+ * .lbl (versalitas) se reserva a los DOS ejes de orientacion del shell: la tira
+ * de estadisticas y la navegacion. Repetirlo en cada bloque de cada tarjeta es
+ * la "ceja diminuta en mayusculas" de plantilla, asi que dentro del contenido
+ * las secciones usan .sec: peso y tinta, no versalitas. */
+.lbl{font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.07em;
+  color:var(--ink-faint);font-weight:600}
+.sec{font-size:var(--t-xs);font-weight:600;color:var(--ink-soft);margin-bottom:var(--s2)}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* -- superficies -- */
+.card{background:var(--surface);border:1px solid var(--hairline);
+  border-radius:var(--radius-lg);padding:var(--s5)}
+.well{background:var(--elevated);border-radius:var(--radius-md);padding:10px 12px}
+.sunken{background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--radius-md)}
+
+/* -- lista abierta: filas separadas por hairline, no una caja por fila.
+      Es lo que sostiene la densidad de "Decisiones" sin verse a plantilla. -- */
+.list{border-top:1px solid var(--hairline)}
+.row{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--hairline);
+  background:transparent;transition:background 160ms ease}
+.row:hover{background:color-mix(in oklab,var(--ink) 4%,transparent)}
+.row:active{background:var(--elevated)}
+.row[data-open="1"]{background:var(--surface)}
+.row-body{border-bottom:1px solid var(--hairline);background:var(--surface)}
+
+/* -- chips y badges: sin relleno pesado; el color va en la tinta -- */
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:var(--t-micro);
+  padding:2px 7px;border-radius:var(--radius-sm);border:1px solid transparent;
+  background:color-mix(in oklab,var(--ink) 7%,transparent);color:var(--ink-soft);white-space:nowrap}
+.chip-strong{font-weight:600}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:var(--t-micro);font-weight:600;
+  padding:2px 8px;border-radius:var(--radius-sm);white-space:nowrap;
+  color:var(--bg);background:var(--c,var(--ink-soft))}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--c,var(--ink-faint))}
+
+/* -- controles -- */
+.seg{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-xs);
+  padding:5px 11px;border-radius:var(--radius-md);border:1px solid transparent;
+  color:var(--ink-faint);background:transparent;transition:color 160ms ease,background 160ms ease}
+.seg:hover{color:var(--ink-soft)}
+.seg:active{color:var(--ink);background:var(--elevated)}
+.seg[aria-pressed="true"],.seg.on{color:var(--ink);background:var(--elevated);border-color:var(--hairline-strong)}
+.btn{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-xs);font-weight:600;
+  padding:6px 13px;border-radius:var(--radius-md);border:1px solid var(--hairline-strong);
+  color:var(--ink);background:var(--elevated);transition:background 160ms ease}
+.btn:hover:not(:disabled){background:color-mix(in oklab,var(--elevated) 80%,var(--ink) 20%)}
+.btn:active:not(:disabled){background:var(--surface)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{color:var(--bg);background:var(--signal-nav);border-color:var(--signal-nav)}
+.btn-primary:hover:not(:disabled){background:color-mix(in oklab,var(--signal-nav) 88%,var(--ink) 12%)}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--ink-faint);font-weight:500}
+.btn-quiet:hover:not(:disabled){background:transparent;color:var(--ink-soft)}
+.field{width:100%;font-family:inherit;font-size:var(--t-xs);line-height:1.55;padding:9px 11px;
+  border-radius:var(--radius-md);border:1px solid var(--hairline-strong);
+  background:var(--inset);color:var(--ink);resize:vertical}
+.field::placeholder{color:var(--ink-faint)}
+
+/* -- opcion elegible --
+ * Sin seleccion las tres opciones se leian como un bloque continuo: mismo peso,
+ * mismo fondo y sin borde, asi que no habia donde ver que son TRES cosas entre
+ * las que hay que escoger. Cada una es ahora una superficie propia con su
+ * casilla; la seleccion sube de capa y pinta la casilla, pero la separacion ya
+ * existe antes de elegir. */
+.option{display:block;width:100%;text-align:left;margin-bottom:var(--s3);
+  padding:9px 11px;border-radius:var(--radius-md);cursor:pointer;
+  border:1px solid var(--hairline);background:var(--inset);
+  transition:border-color 160ms ease,background 160ms ease}
+.option:hover{border-color:var(--hairline-strong)}
+.option[data-picked="1"]{border-color:var(--signal-nav);background:var(--elevated)}
+.option-mark{width:12px;height:12px;flex:none;border-radius:3px;
+  border:1px solid var(--hairline-strong);background:transparent;position:relative}
+.option[data-picked="1"] .option-mark{border-color:var(--signal-nav);background:var(--signal-nav)}
+.option[data-picked="1"] .option-mark::after{content:"";position:absolute;left:3px;top:0;
+  width:4px;height:8px;border:solid var(--bg);border-width:0 1.6px 1.6px 0;transform:rotate(43deg)}
+
+/* -- medidor: barra fina de proporcion (EV, terminos del HEF, pesos) -- */
+.meter{height:3px;border-radius:2px;background:var(--hairline);overflow:hidden}
+.meter>i{display:block;height:100%;border-radius:2px;background:var(--c,var(--ink-soft))}
+
+/* -- prosa: el bloque "Argumento" tratado como cita, no como tooltip -- */
+.prose{font-size:var(--t-sm);line-height:1.75;color:var(--ink);text-align:justify;hyphens:auto;
+  border-left:2px solid var(--hairline-strong);padding-left:var(--s4)}
+.prose-nav{border-left-color:var(--signal-nav)}
+
+/* -- aviso: caja de estado; el color va en el borde y la tinta -- */
+.note{border:1px solid var(--hairline);border-radius:var(--radius-md);
+  padding:10px 12px;font-size:var(--t-xs);line-height:1.6;color:var(--ink-soft)}
+.note-nav{border-color:color-mix(in oklab,var(--signal-nav) 45%,var(--hairline));background:var(--wash-nav)}
+.note-warn{border-color:color-mix(in oklab,var(--signal-warn) 45%,var(--hairline));background:var(--wash-warn)}
+.note-bad{border-color:color-mix(in oklab,var(--signal-bad) 45%,var(--hairline));background:var(--wash-bad)}
+
+/* -- lectura de una decisión: una secuencia con reglas, no cuatro tarjetas -- */
+.decision-flow{display:flex;flex-direction:column}
+.decision-stage{position:relative;padding:0 0 var(--s5)}
+.decision-stage-marked{padding-left:28px}
+.decision-stage+.decision-stage{padding-top:var(--s5);border-top:1px solid var(--hairline)}
+.decision-stage-mark{position:absolute;left:0;top:2px;width:19px;height:19px;border:1px solid var(--hairline-strong);border-radius:50%;display:grid;place-items:center;color:var(--ink-faint);font-size:11px}
+.decision-stage-title{display:block;font-size:var(--t-xs);font-weight:700;color:var(--ink-soft);
+  margin:0 0 var(--s4);padding:6px 8px;border-radius:var(--radius-sm);
+  background:color-mix(in oklab,var(--elevated) 70%,transparent)}
+.decision-stage-analysis .decision-stage-title{color:var(--ink)}
+.decision-stage-evidence .decision-stage-title{color:var(--ink-soft);background:color-mix(in oklab,var(--surface) 74%,var(--elevated))}
+.decision-stage-player .decision-stage-title{color:var(--signal-nav);background:var(--wash-nav)}
+.decision-stage-risk .decision-stage-title{color:var(--ink-soft)}
+.decision-stage-agree .decision-stage-mark,.decision-stage-agree .decision-stage-title{color:var(--signal-ok);border-color:color-mix(in oklab,var(--signal-ok) 58%,var(--hairline))}
+.decision-stage-equivalent .decision-stage-mark,.decision-stage-equivalent .decision-stage-title{color:var(--signal-warn);border-color:color-mix(in oklab,var(--signal-warn) 58%,var(--hairline))}
+.decision-stage-disagree .decision-stage-mark,.decision-stage-disagree .decision-stage-title{color:var(--signal-bad);border-color:color-mix(in oklab,var(--signal-bad) 58%,var(--hairline))}
+.decision-subsection-title{border-top:1px solid var(--hairline);padding-top:var(--s4);margin-top:var(--s2)}
+.request-state{font-size:var(--t-xs);display:inline-flex;align-items:center;gap:4px}
+.request-state[data-state="saving"]{color:var(--signal-warn)}
+.request-state[data-state="success"]{color:var(--signal-ok)}
+.request-state[data-state="error"]{color:var(--signal-bad)}
+
+/* ============================ shell de dos zonas ============================ */
+.shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh}
+.nav{border-right:1px solid var(--hairline);background:var(--bg);
+  padding:var(--s6) var(--s4) var(--s5);position:sticky;top:0;height:100vh;
+  overflow-y:auto;display:flex;flex-direction:column;gap:var(--s5)}
+.nav-brand{font-family:var(--font-display);font-size:var(--t-lg);font-weight:600;
+  letter-spacing:-.015em;line-height:1.1}
+/* -- marca -- */
+.nav-brand{display:flex;align-items:center;gap:9px}
+.brand-slot{display:block;width:26px;height:26px;flex:none}
+.brand-mark{width:100%;height:100%;display:block}
+
+.nav-list{display:flex;flex-direction:column;gap:1px}
+.nav-item{display:flex;align-items:center;gap:var(--s3);width:100%;text-align:left;
+  padding:7px 10px;border-radius:var(--radius-md);font-size:var(--t-xs);
+  color:var(--ink-faint);border:1px solid transparent;transition:color 160ms ease,background 160ms ease}
+.nav-item:hover{color:var(--ink-soft);background:color-mix(in oklab,var(--ink) 4%,transparent)}
+.nav-item:active{color:var(--ink);background:var(--elevated)}
+.nav-item[aria-current="page"]{color:var(--ink);background:var(--surface);border-color:var(--hairline)}
+.nav-item[aria-current="page"] .nav-mark{background:var(--signal-nav)}
+.nav-mark{width:2px;align-self:stretch;border-radius:1px;background:transparent;flex:none}
+.nav-count{margin-left:auto;font-family:var(--font-mono);font-size:var(--t-micro);color:var(--ink-faint)}
+.main{min-width:0;padding:var(--s6) var(--s6) var(--s7);max-width:var(--content-max)}
+
+/* -- tira de estadisticas: hairlines verticales, no cinco tarjetas clonicas.
+      Deliberadamente silenciosa: orienta, no es el protagonista de la vista. -- */
+.stats{display:flex;flex-wrap:wrap;gap:0;background:var(--surface);
+  border:1px solid var(--hairline);border-radius:var(--radius-lg);
+  padding:var(--s4) var(--s5);margin-bottom:var(--s5)}
+.stat{display:flex;flex-direction:column;gap:1px;padding-right:var(--s6);min-width:104px}
+.stat+.stat{border-left:1px solid var(--hairline);padding-left:var(--s6)}
+.stat-val{font-family:var(--font-mono);font-size:var(--t-md);font-weight:600;line-height:1.2}
+
+/* -- fila de partida: el retrato ancla el reconocimiento y el KDA es el bloque
+      numerico prominente. Una sola linea de metadata; la cuadricula de dos
+      columnas separaba datos relacionados y obligaba a leer etiquetas. -- */
+/* Cada partida es una celda propia, no un renglon de una lista continua: son
+   objetos que se eligen de uno en uno, y unidas por hairline se leian como un
+   bloque homogeneo. Dentro del panel (--surface) la celda baja a --bg, asi que
+   se hunde; la activa sube a --elevated y marca el borde. */
+.match-row{display:flex;align-items:center;gap:9px;padding:8px 9px;
+  background:var(--bg);border:1px solid var(--hairline);
+  border-radius:var(--radius-md);margin-bottom:var(--s2)}
+.match-row:hover{border-color:var(--hairline-strong);background:var(--surface)}
+.match-body{flex:1;min-width:0}
+.portrait{width:34px;height:34px;flex:none;border-radius:var(--radius-md);overflow:hidden;
+  background:var(--elevated);border:1px solid var(--hairline);display:block}
+.portrait img{width:100%;height:100%;display:block;object-fit:cover}
+.portrait-fb{display:flex;width:100%;height:100%;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-size:var(--t-sm);font-weight:600;color:var(--ink-faint)}
+.kda{font-size:var(--t-xs);font-weight:600;color:var(--ink);letter-spacing:.01em}
+.kda-sep{color:var(--ink-faint);margin:0 2px;font-weight:400}
+.portrait-lg{width:46px;height:46px}
+
+/* Distribucion de detectores: orden fijo, icono + conteo. Como la build de
+   OP.GG, se lee por posicion; a diferencia de ella, el conteo va en texto
+   porque aqui el numero ES el dato, no un adorno del icono. */
+.detmix{display:inline-flex;align-items:center;gap:var(--s4);flex-wrap:wrap}
+.detmix-item{display:inline-flex;align-items:center;gap:4px;
+  font-size:var(--t-micro);color:var(--ink-soft);white-space:nowrap}
+
+/* La fila ancha de "Partidas recientes" respira mas que la de la columna
+   estrecha: mismo componente, distinta densidad segun donde vive. */
+.match-row-wide{padding:11px 13px;gap:12px}
+
+/* -- paneles --
+ * El sistema tiene tres capas de luminosidad y durante un rato solo se uso una:
+ * todo vivia sobre --bg y la profundidad la cargaban los hairlines solos, asi
+ * que la pantalla se leia como una sola lamina rayada. Cada bloque de trabajo se
+ * apoya ahora en --surface y el fondo queda como aire entre ellos. No son
+ * tarjetas clonicas: son paneles con estructura interna distinta -- uno es una
+ * lista de partidas con retrato, otro un flujo de decisiones -- y por eso el
+ * relleno y el ritmo de cada uno cambian. */
+.panel{background:var(--surface);border:1px solid var(--hairline);
+  border-radius:var(--radius-lg);overflow:hidden;
+  /* El anclaje automatico de Chrome elige su propia ancla y se peleaba con la
+     compensacion explicita del anclaje: entre las dos el scroll saltaba
+     1472 px en vez de quedarse quieto. Aqui manda una sola. */
+  overflow-anchor:none}
+.panel-head{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;
+  padding:10px var(--s4);border-bottom:1px solid var(--hairline);background:var(--bg)}
+.panel-body{padding:var(--s2) var(--s2)}
+.panel-body>.row:last-child,.panel-body>div:last-child>.row:last-child{border-bottom:0}
+
+/* Columna de exploracion (partidas) frente al detalle: dos zonas de la vista. */
+.explore{width:242px;flex-shrink:0;max-height:78vh;overflow-y:auto;position:sticky;top:var(--s4)}
+.decision-layout{display:flex;gap:var(--s5);align-items:flex-start}
+.decision-detail{flex:1;min-width:0}
+
+/* Las filas dentro de un panel ya no necesitan el hairline a sangre: el panel
+   las contiene, asi que la linea se acorta y el hover sube de capa.
+   Se excluye .match-row: esa es una celda con borde propio, y sin el :not()
+   estas reglas le ganaban por orden y le dejaban el radio en 0 de la segunda
+   celda en adelante. */
+.panel .row:not(.match-row){border-radius:var(--radius-md);border-bottom-color:transparent}
+.panel .row:not(.match-row)+.row:not(.match-row){border-top:1px solid var(--hairline);border-radius:0}
+.panel .row:not(.match-row):hover{background:var(--elevated)}
+
+/* -- ticket: un item de cola --
+ * Sesion, trades, anclas y revision son colas de trabajo: cada entrada es una
+ * unidad independiente que se abre, se marca y se cierra. Ahi la superficie
+ * propia SI corresponde -- no es la retícula de tarjetas clonicas del veto, es
+ * el mismo objeto repetido. Abierto sube de capa para que se vea cual estas
+ * trabajando sin buscar el borde. */
+.ticket{background:var(--surface);border:1px solid var(--hairline);
+  border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--s3);
+  transition:border-color 160ms ease}
+.ticket:hover{border-color:var(--hairline-strong)}
+.ticket[data-open="1"]{border-color:var(--hairline-strong);background:var(--elevated)}
+.ticket>button:first-child{border-bottom-color:transparent!important}
+.ticket[data-open="1"]>button:first-child{border-bottom-color:var(--hairline)!important}
+
+h1,h2,h3{font-family:var(--font-display);font-weight:600;line-height:1.2;letter-spacing:-.01em}
+.h-view{font-size:var(--t-md);font-weight:600;font-family:var(--font-display)}
+
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr}
+  .nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--hairline);
+    flex-direction:column;padding:var(--s5) var(--s4)}
+  .nav-list{flex-direction:row;flex-wrap:nowrap;gap:var(--s1);overflow-x:auto;padding-bottom:var(--s1)}
+  .nav-item{width:auto;flex:0 0 auto;white-space:nowrap}
+  .main{padding:var(--s5) var(--s4) var(--s6)}
+  .stat+.stat{border-left:0;padding-left:0}
+  .explore{position:static;width:100%;max-height:36vh;overflow-y:auto;border-right:0;border-bottom:1px solid var(--hairline);padding:0 0 var(--s4)}
+  .decision-layout{flex-direction:column}
+  .decision-detail{width:100%}
+}
+@media (max-width:480px){
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s5)}
+  .stat{min-width:0;padding:0}
+  .decision-stage:not(.decision-stage-plain){padding-left:25px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<h2 class="sr-only">Dashboard de coaching personal para League of Legends</h2>
+<h2 class="sr-only">RiftPattern — coaching personal para League of Legends</h2>
 <div id="root"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script>
 const {useState, useEffect, useRef} = React;
+
+// Marca RiftPattern. Va inline y no como <img> para que la cabecera no
+// dependa de una peticion mas ni parpadee al cargar.
+const BRAND_MARK = '<svg class="brand-mark" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false"><defs><linearGradient id="rpGold" x1="232" y1="179" x2="733" y2="674" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#E2C375"/><stop offset=".5" stop-color="#D1B062"/><stop offset="1" stop-color="#C99F46"/></linearGradient><linearGradient id="rpCyan" x1="352" y1="304" x2="815" y2="833" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#49C4EA"/><stop offset=".55" stop-color="#3DBEE7"/><stop offset="1" stop-color="#2FA9DC"/></linearGradient></defs><path fill="url(#rpGold)" d="m 451,180 c -61.58641,8.15681 -121.10834,36.89735 -161.12323,85.18459 -50.34972,56.31813 -68.91864,137.61193 -52.43462,210.63959 17.10933,86.85757 86.6922,159.39459 170.07898,186.54317 C 464.4855,679.8259 528.2056,678.86954 583,654 568.56965,640.3327 557.64698,620.47702 533.83751,621.91828 494.66502,632.00363 453.12426,630.82394 414.84352,617.7571 340.49598,592.06018 284.17567,519.82348 278.93358,441.01418 272.22739,379.26151 296.88945,315.14141 343.83885,274.12295 378.77023,241.55518 426.26315,222.3939 474,222 c 24.93581,-1.67836 51.09455,1.65947 75.07488,9.59585 C 621.39783,255.75919 679.1076,323.35817 686,400 c 5.44874,43.18456 -42.55226,128.10761 -57.19055,153.83589 -3.53862,13.08821 7.73931,27.56048 26.72493,52.41216 34.02437,-44.801 76.59658,-119.41282 76.9462,-179.05967 C 735.57829,326.20484 678.86762,262.89074 647.92141,237.57733 594.45667,191.13073 520.86673,172.9751 451,180 Z"/><path fill="url(#rpCyan)" d="m 353,305 c 1.00854,82.77453 -4.28616,167.55797 1,250 6.44339,9.79191 22.97401,20.39901 36.11458,28.27791 10.89856,7.12369 9.68768,4.52887 9.88542,-7.33792 V 348 c 34.67558,-0.56681 65.3759,-1 98,-1 10.39216,0.0181 17.51168,1.65512 24.70283,4.88704 C 533.93164,358.9102 552.89695,376.86303 553,395 c 0.23879,7.30428 0.65285,16.13787 -1.77847,23.3354 C 545.30935,437.63981 526.98148,453.18381 507,456 c -7.22097,2.06191 -15.38614,2.53434 -23.03001,3 H 421 v 49 c 5.50136,-1.61041 15.7368,-1.17967 22.82727,-1.36545 10.17885,1.31815 13.96591,2.03223 21.33334,5.05889 25.26935,7.51959 39.1765,32.04753 57.29679,49.40278 31.16309,34.25319 63.49223,67.53429 93.917,102.40298 5.39626,6.6004 1.60049,16.68457 8.68927,22.94025 15.63768,17.4293 31.25803,35.05827 46.75427,52.66938 C 689.55539,757.76236 705.86954,777.67349 724,796 c 9.22486,11.99316 19.87402,22.11364 30,33 9.45394,5.69438 22.86173,6.44465 31,-2 8.80879,-10.17607 21.36731,-19.84731 28.88635,-31.7727 4.91709,-11.402 -3.07713,-22.29022 -11.63147,-29.36222 C 787.34155,750.26636 773.85313,735.18073 758,720 c -8.49649,-9.97897 -19.18661,-20.06771 -29,-30 -7.86448,-10.03297 -20.18346,-19.98625 -27.98839,-29.98839 -11.69683,-10.39471 -21.01607,-26.02592 -37.62249,-28.05596 -9.31399,0.48192 -13.79552,-8.3325 -20.11172,-14.07896 C 605.18493,578.58446 567.09247,539.29223 529,500 c 14.23262,-4.96252 27.55514,-11.5457 38.97865,-21.51058 11.86275,-11.42374 22.12992,-25.13192 26.87651,-40.91352 2.21537,-7.79714 3.48869,-15.18368 4.60166,-23.39317 0.20811,-6.74933 0.38266,-16.03043 -0.45682,-22.99473 -0.012,-13.57578 -4.97604,-26.92733 -11.81082,-39.33666 -9.175,-14.89193 -21.51117,-27.97902 -37.18337,-35.84553 C 539.51686,310.29602 527.98856,306.63058 516,306 c -7.06356,-1.66883 -14.87017,-1.54377 -22.43601,-2 0,0 -138.70242,0.48761 -140.56399,1 z"/></svg>';
 const h = React.createElement;
 
 const DET = {
-  death_v1:               {label:"Muerte",   acc:"#E24B4A"},
-  trade_v1:               {label:"Trade",    acc:"#EF9F27"},
-  tempo_v1:               {label:"Tempo",    acc:"#378ADD"},
-  objective_readiness_v1: {label:"Objetivo", acc:"#1D9E75"},
+  death_v1:               {label:"Muerte",   acc:"var(--det-death)"},
+  trade_v1:               {label:"Trade",    acc:"var(--signal-warn)"},
+  tempo_v1:               {label:"Tempo",    acc:"var(--det-tempo)"},
+  objective_readiness_v1: {label:"Objetivo", acc:"var(--det-objective)"},
 };
 
 const GLYPH = {down:"▾",up:"▴",check:"✓",x:"✕",alert:"⚠",play:"▶",dot:"●",approx:"≈"};
+
+// Iconos de detector: SVG propios sobre una reticula comun de 16, trazo unico y
+// currentColor. Son iconos de CATEGORIA (pueden tener caracter), a diferencia de
+// los glifos de control, que siguen siendo austeros. Nunca van solos: acompanan
+// siempre a la etiqueta del detector, para no depender del color ni de la forma.
+const DET_PATHS = {
+  // muerte: craneo de mandibula angular. Los ojos NO van de trazo: a 12px un
+  // circulo hueco se cierra en una mancha, mientras que una cuenca rellena e
+  // inclinada sobrevive al reducido y es ademas la que da el gesto agresivo.
+  death_v1: "M8 2.3c-3 0-5.1 2-5.1 4.8 0 1.4.6 2.5 1.4 3.2v1.9c0 .6.5 1.1 1.1 1.1h5.2c.6 0 1.1-.5 1.1-1.1v-1.9c.8-.7 1.4-1.8 1.4-3.2 0-2.8-2.1-4.8-5.1-4.8Z",
+  // trade: dos flechas que se cruzan (intercambio de dano)
+  trade_v1: "M2.5 5.5h9 M9 3l2.5 2.5L9 8 M13.5 10.5h-9 M7 8l-2.5 2.5L7 13",
+  // tempo: reloj
+  tempo_v1: "M8 3.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Z M8 5.6V8l1.9 1.2",
+  // objetivo: un solo rombo con el centro marcado por un punto. El rombo
+  // interior anidado casi tocaba el exterior y a 12px se leia como un rombo
+  // macizo, no como dos formas.
+  objective_readiness_v1: "M8 2.2 13.2 8 8 13.8 2.8 8Z",
+};
+// Formas rellenas: aguantan el reducido mucho mejor que el trazo fino.
+const DET_FILLS = {
+  death_v1: [
+    "M4.9 6.4 7.1 7.3l-.6 1.9-2.1-.9Z",   // cuenca izquierda, inclinada hacia dentro
+    "M11.1 6.4 8.9 7.3l.6 1.9 2.1-.9Z",   // cuenca derecha
+    "M8 9.7l.85 1.7h-1.7Z",               // hueco nasal
+  ],
+};
+// Punto central relleno: circulo, no un segundo rombo.
+const DET_DOTS = { objective_readiness_v1: [8, 8, 1.7] };
+// Metadata de fila. Antes era UNA cadena mono donde campeon, fecha, minuto y gap
+// pesaban lo mismo y el ojo no tenia donde aterrizar. Cada dato recibe ahora su
+// tratamiento: el campeon es texto, el minuto va en mono porque es un dato, la
+// fecha queda tenue y el gap EV se separa como medida, con su explicacion.
+function RowMeta({champion, date, time, evGap}){
+  return h("span", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:"var(--t-micro)",lineHeight:1.5}},
+    champion && h("span", {style:{color:"var(--ink-soft)",fontWeight:600}}, champion),
+    time && h("span", {className:"mono", style:{color:"var(--ink)"}}, time),
+    date && h("span", {style:{color:"var(--ink-faint)"}}, date),
+    evGap!=null && h("span", {className:"chip mono",
+      title:"Diferencia de EV entre la mejor opción y la que tomaste: cuánto había en juego"},
+      "gap EV ", evGap.toFixed(2))
+  );
+}
+
+function DetIcon({detector, size, color}){
+  const d = DET_PATHS[detector];
+  if(!d) return null;
+  const s = size||14, fills = DET_FILLS[detector] || [], dot = DET_DOTS[detector];
+  const ink = color || "currentColor";
+  return h("svg", {width:s, height:s, viewBox:"0 0 16 16", fill:"none",
+      stroke:ink, strokeWidth:1.4, strokeLinecap:"round",
+      strokeLinejoin:"round", "aria-hidden":"true", style:{flexShrink:0,display:"block"}},
+    ...d.split(" M").map((seg,i) => h("path", {key:"s"+i, d:(i?"M":"")+seg})),
+    ...fills.map((f,i) => h("path", {key:"f"+i, d:f, fill:ink, stroke:"none"})),
+    dot && h("circle", {cx:dot[0], cy:dot[1], r:dot[2], fill:ink, stroke:"none"}));
+}
+const tint = (color, amount=14) => `color-mix(in oklab, ${color} ${amount}%, transparent)`;
+const tonedBorder = (color, amount=40) => `color-mix(in oklab, ${color} ${amount}%, var(--hairline))`;
 function Ico({name,size,color}){
   return h("span",{style:{fontSize:size||13,color:color||"inherit",lineHeight:1,display:"inline-block"},"aria-hidden":"true"}, GLYPH[name]||"");
 }
@@ -63,19 +448,19 @@ function Ico({name,size,color}){
 function evColor(v){
   if(v==null) return "var(--color-text-tertiary)";
   if(v>=0.65) return "var(--color-text-success)";
-  if(v>=0.40) return "#EF9F27";
+  if(v>=0.40) return "var(--signal-warn)";
   return "var(--color-text-danger)";
 }
 function evBg(v){
   if(v==null) return "var(--color-background-tertiary)";
   if(v>=0.65) return "var(--color-background-success)";
-  if(v>=0.40) return "rgba(239,159,39,0.12)";
+  if(v>=0.40) return "var(--wash-warn)";
   return "var(--color-background-danger)";
 }
 function trendInfo(t){
-  if(t==="worsening") return {icon:"up",label:"Empeorando",c:"#E24B4A"};
-  if(t==="improving") return {icon:"down",label:"Mejorando",c:"#1D9E75"};
-  return {icon:"dot",label:"Estable",c:"#EF9F27"};
+  if(t==="worsening") return {icon:"up",label:"Empeorando",c:"var(--det-death)"};
+  if(t==="improving") return {icon:"down",label:"Mejorando",c:"var(--det-objective)"};
+  return {icon:"dot",label:"Estable",c:"var(--signal-warn)"};
 }
 const fmtEV = v => v==null ? "—" : v.toFixed(2);
 
@@ -100,13 +485,20 @@ const MARK_TYPE_BTNS = [
   {key:"missing_context", label:"contexto faltante"},
   {key:"wrong_moment",    label:"momento equivocado"},
 ];
+const MARK_TYPE_HELP = {
+  decision:"La lectura del estado era el problema: aun ejecutando perfecto, convenía otra opción. Esta marca sí entrena al learner.",
+  execution:"La opción era razonable; falló cómo se ejecutó (timing, mecánica, posicionamiento o recursos). No entrena al learner.",
+  mixed:"Hubo dos fallas independientes: la opción no era buena y la ejecución también empeoró el resultado. No entrena al learner.",
+  missing_context:"El sistema no ve un dato decisivo. Escribe qué información faltó y cómo cambiaba la lectura. No entrena al learner.",
+  wrong_moment:"El análisis puede ser válido, pero está anclado al instante equivocado. Indica cuál era el momento relevante. No entrena al learner.",
+};
 // Friendly labels for cohorts; unknown cohorts fall back to their raw key.
-const COHORT_LABELS = {master:"main · master", emerald:"smurf · emerald", challenger:"reference · challenger"};
+const COHORT_LABELS = {master:"Cuenta principal · Master", emerald:"Cuenta secundaria · Emerald", challenger:"Referencia · Challenger"};
 
 function powerColor(idx){
   if(idx>=0.55) return "var(--color-text-success)";
   if(idx<=0.45) return "var(--color-text-danger)";
-  return "#EF9F27";
+  return "var(--signal-warn)";
 }
 // HEF: composite, auditable decision-quality score with its breakdown — the
 // weighted terms (power/info/wave/action-fit) and the penalties Π applied.
@@ -116,7 +508,7 @@ function HefPanel({hef}){
   const terms = hef.terms || {}, weights = hef.weights || {}, pen = hef.penalties || {};
   return h("div", {style:{marginBottom:14}},
     h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}},
-      h("span", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)"}}, "Evaluación (HEF)"),
+      h("span", {className:"sec", style:{marginBottom:0}}, "Evaluación (HEF)"),
       h("span", {style:{fontSize:13,fontFamily:"var(--font-mono)",fontWeight:600,color:c}}, `${hef.score.toFixed(2)} · ${hef.label||""}`)
     ),
     ...Object.keys(terms).map(k => h("div", {key:k, style:{display:"flex",alignItems:"center",gap:8,marginBottom:3}},
@@ -132,8 +524,14 @@ function HefPanel({hef}){
   );
 }
 
+function DecisionStage({num, icon, title, tone, marker=false, children}){
+  return h("section", {className:`decision-stage${marker ? " decision-stage-marked" : ""}${tone ? " decision-stage-"+tone : ""}`},
+    marker && h("span", {className:"decision-stage-mark", "aria-hidden":"true"}, icon || num),
+    h("h3", {className:"decision-stage-title"}, `${num}. ${title}`), children);
+}
+
 function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, domId, highlight}){
-  const det = DET[d.detector] || {label:d.detector, acc:"#888"};
+  const det = DET[d.detector] || {label:d.detector, acc:"var(--ink-faint)"};
   const [note, setNote] = useState(d.feedback_note || "");
   // Si la marca es HISTORICA (#25) el indice guardado apunta a un conjunto de
   // opciones que ya no existe: pre-seleccionarlo pintaria "tu elección" sobre una
@@ -141,7 +539,8 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
   // contra la lista de entonces, en el bloque de marca historica.
   const [best, setBest] = useState((d.best_option==null || d.historical_mark) ? null : d.best_option);
   const [markType, setMarkType] = useState(d.mark_type || null);
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState("idle");
+  const [feedbackState, setFeedbackState] = useState("idle");
   // Momento del intercambio (via HP del recorder): se pide PEREZOSO al abrir el
   // clip de un trade (leer los snapshots de 50-100 MB en la ruta masiva colgaba
   // el dashboard). Mientras no llega, el seek cae al inicio del minuto.
@@ -160,18 +559,23 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
   const _evs = (d.options||[]).map(o=>o.ev||0).slice().sort((a,b)=>b-a);
   const tieGap = _evs.length>=2 ? Math.round((_evs[0]-_evs[1])*100)/100 : null;
   const isTie = tieGap!=null && tieGap<=0.10;
-  return h("div", {id: domId, style:{
-      border:"0.5px solid var(--color-border-tertiary)",
-      borderLeft:`3px solid ${det.acc}`,
-      borderRadius:"0 var(--border-radius-lg) var(--border-radius-lg) 0",
-      marginBottom:8, overflow:"hidden", background:"var(--color-background-secondary)",
-      boxShadow: highlight ? "0 0 0 2px var(--color-text-info)" : undefined,
+  // Fila de lista abierta: separada por hairline, no una caja con filete de
+  // acento (esa combinacion —raya de color sobre tarjeta redondeada, repetida en
+  // cada fila— es la receta de plantilla). El detector lo identifica su etiqueta.
+  const fbTone = fb === "agree" ? {ink:"var(--signal-ok)", wash:"var(--wash-ok)"}
+    : fb === "equivalent" ? {ink:"var(--signal-warn)", wash:"var(--wash-warn)"}
+    : fb === "disagree" ? {ink:"var(--signal-bad)", wash:"var(--wash-bad)"} : null;
+  return h("div", {id: domId, "data-open": exp?"1":undefined, style:{
+      borderBottom:`1px solid ${fbTone ? `color-mix(in oklab,${fbTone.ink} 42%,var(--hairline))` : "var(--hairline)"}`,
+      background: fbTone ? `color-mix(in oklab,${fbTone.wash} 58%,${exp ? "var(--surface)" : "transparent"})` : (exp ? "var(--surface)" : "transparent"),
+      boxShadow: highlight ? "inset 2px 0 0 var(--signal-nav)" : undefined,
     }},
-    h("div", {onClick:onToggle, style:{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
-      h("span", {style:{fontSize:11,fontWeight:600,color:"#0e0e11",background:det.acc,padding:"2px 9px",borderRadius:"var(--border-radius-md)"}}, det.label),
-      h("span", {style:{fontSize:13,fontWeight:500}}, d.champion),
-      d.role && h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",background:"var(--color-background-tertiary)",padding:"1px 6px",borderRadius:"var(--border-radius-md)"}}, ROLE_L[d.role]||d.role),
-      h("span", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, `${d.time} · ${d.date}`),
+    h("button", {onClick:onToggle, "aria-expanded":!!exp,
+      style:{padding:"11px 14px",width:"100%",textAlign:"left",cursor:"pointer",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
+      h("span", {className:"tag", style:{"--c":det.acc}}, h(DetIcon,{detector:d.detector,size:12}), det.label),
+      h("span", {style:{fontSize:"var(--t-sm)",fontWeight:600}}, d.champion),
+      d.role && h("span", {className:"chip"}, ROLE_L[d.role]||d.role),
+      h("span", {className:"mono", style:{fontSize:"var(--t-xs)",color:"var(--ink-faint)"}}, `${d.time} · ${d.date}`),
       h("div", {style:{marginLeft:"auto",display:"flex",alignItems:"center",gap:7}},
         fb && (()=>{ const m = fb==="disagree"?{c:"danger",ic:"x",t:"se equivoca"}:fb==="equivalent"?{c:"info",ic:"approx",t:"≈ equiv"}:{c:"success",ic:"check",t:"acierta"};
           return h("span", {title:"Marcaste: "+m.t,
@@ -183,179 +587,195 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
           style:{fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:3,padding:"2px 7px",borderRadius:"var(--border-radius-md)",
             color:"var(--color-text-warning)", background:"var(--color-background-warning)"}},
           h(Ico,{name:"alert",size:11}), "histórica"),
-        d.reward_score!=null && h("span", {title:`reward ${d.reward_score>0?"+":""}${d.reward_score}`,
-          style:{width:9,height:9,borderRadius:"50%",flexShrink:0,
-            background:d.reward_score>0?"var(--color-text-success)":(d.reward_score<0?"var(--color-text-danger)":"#5a5a66")}}),
-        d.hef && d.hef.score!=null && h("span", {style:{fontSize:11,fontFamily:"var(--font-mono)",fontWeight:600,color:powerColor(d.hef.score),background:evBg(d.hef.score),padding:"3px 10px",borderRadius:"var(--border-radius-md)"}}, `HEF ${d.hef.score.toFixed(2)}`),
+        // El circulo de reward y el "HEF 0.17" desaparecen de la fila colapsada:
+        // eran conceptos internos sin explicacion, y un numero desnudo no dice
+        // si esta bien o mal. En su lugar va la MISMA etiqueta interpretable que
+        // usa el detalle (hef_label del backend), asi que nunca pueden divergir.
+        // El valor exacto sigue disponible al expandir.
+        d.hef && d.hef.label && h("span", {
+          title:`Evaluación del programa: ${d.hef.score!=null?d.hef.score.toFixed(2):"—"} · expande para ver el desglose`,
+          style:{fontSize:"var(--t-micro)",fontWeight:600,color:powerColor(d.hef.score),
+            background:evBg(d.hef.score),padding:"3px 9px",borderRadius:"var(--radius-sm)",whiteSpace:"nowrap"}},
+          d.hef.label),
         h(Ico, {name:exp?"up":"down",size:13,color:"var(--color-text-tertiary)"})
       )
     ),
-    h("div", {style:{padding:"0 14px 11px",fontSize:12.5,color:"var(--color-text-primary)"}}, d.moment),
-    exp && h("div", {style:{borderTop:"0.5px solid var(--color-border-tertiary)",padding:"14px"}},
-      d.outcome && h("p", {style:{fontSize:12,color:"var(--color-text-secondary)",marginBottom:14}}, d.outcome),
-      d.hef && d.hef.score!=null && h(HefPanel, {hef:d.hef}),
-      h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:8}}, "Contexto"),
-      h("div", {style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:"6px 16px",padding:"10px 12px",background:"var(--color-background-tertiary)",borderRadius:"var(--border-radius-md)",marginBottom:14}},
+    h("div", {style:{padding:"0 14px 12px",fontSize:"var(--t-sm)",color:"var(--ink)"}}, d.moment),
+    exp && h("div", {className:"decision-flow", style:{borderTop:"1px solid var(--hairline)",padding:"var(--s5) 14px"}},
+      h(DecisionStage, {num:"01", title:"Análisis del programa", tone:"analysis"},
+        d.outcome && h("p", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",marginBottom:d.hef&&d.hef.score!=null?"var(--s4)":0}}, d.outcome),
+        h("p", {className:"sec"}, "Inferencia del programa"),
+        h("div", {className:"prose", style:{marginBottom:"var(--s5)"}}, d.argument),
+        d.hef && d.hef.score!=null && h(HefPanel, {hef:d.hef})
+      ),
+      h(DecisionStage, {num:"02", title:"Evidencia disponible", tone:"evidence"},
+      h("p", {className:"sec"}, "Observación · contexto capturado"),
+      h("div", {className:"well", style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(132px,1fr))",gap:"7px 18px",marginBottom:"var(--s5)"}},
         ...Object.entries(d.ctx).map(([k,v]) =>
           h("div", {key:k},
-            h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginBottom:2}}, k),
-            h("div", {style:{fontSize:12,fontFamily:"var(--font-mono)",fontWeight:500}}, String(v))
+            h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",marginBottom:2}}, k),
+            h("div", {className:"mono", style:{fontSize:"var(--t-xs)",fontWeight:500}}, String(v))
           )
         )
       ),
-      h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:8}}, "Opciones"),
-      isTie && h("div", {style:{fontSize:11,lineHeight:1.5,color:"var(--color-text-info)",background:"var(--color-background-info)",border:"0.5px solid var(--color-text-info)",borderRadius:"var(--border-radius-md)",padding:"6px 9px",marginBottom:8,display:"flex",alignItems:"flex-start",gap:6}},
-        h(Ico,{name:"approx",size:12}),
-        h("span",{}, `Decisión cercana: las dos mejores opciones son prácticamente equivalentes (Δ ${tieGap.toFixed(2)}). Elegir la tuya no es un error — si crees que ambas valen, marca "≈ equivalentes" en vez de "se equivoca".`)),
+      // PICKER NEUTRO. Mientras el jugador elige NO puede ver la recomendacion
+      // del sistema: 273 de 323 marcas (85%) coincidieron con la opcion de max
+      // EV mientras el HEF acierta ~52%, asi que la UI dictaba la respuesta y
+      // los pares `dec` del learner entrenaban contra una copia del HEF. Aqui no
+      // hay `optimal`, ni EV, ni barra, ni color de recomendacion.
+      // `lo que hiciste` y `tu eleccion` se quedan: son hechos, no juicios.
+      // El desglose auditable con EV y recomendacion vive en la etapa 04.
+      // El clip vive en la EVIDENCIA, no al final de la tarjeta. Estaba debajo de
+      // todo y obligaba a bajar hasta el fondo y volver a subir para leer en qué
+      // minuto pasan las cosas mientras se elige la opción.
+      d.has_clip && h("div", {style:{marginBottom:"var(--s5)"}},
+        h("button", {onClick:(e)=>{e.stopPropagation();onClip(d.id)}, className:"seg", "aria-pressed":!!clipOpen},
+          h(Ico,{name:"play",size:12}), clipOpen?"Ocultar clip":"Ver clip"),
+        clipOpen && h("video", {ref:clipVidRef, controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
+          onLoadedMetadata:(e)=>{ const mo = momentMs!=null?momentMs:d.moment_ms; const off=(d.clip_offset_s||0)+(mo!=null?(mo-d.game_time_ms)/1000:0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
+          onError:(e)=>{e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:12px;margin-top:8px">Clip no disponible en disco (ruta movida o eliminada).</div>');e.target.remove();}}),
+        clipOpen && d.clip_offset_s!=null && h("div",{className:"muted mono",style:{fontSize:"var(--t-micro)",marginTop:4}},
+          `clip @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")} · seek −5s para contexto`)),
+      h("p", {className:"sec decision-subsection-title"}, "¿Cuál era la opción adecuada?"),
+      h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",marginBottom:"var(--s3)",lineHeight:1.5}},
+        "Elige antes de ver qué recomienda el programa: su evaluación aparece abajo, en «Calibración»."),
       h("div", {style:{marginBottom:14}},
         ...d.options.map((opt,i) =>
-          h("div", {key:i, onClick:(e)=>{e.stopPropagation(); setBest(best===i?null:i); setSaved(false);},
+          h("button", {key:i, type:"button", "aria-pressed":best===i, onClick:(e)=>{e.stopPropagation(); setBest(best===i?null:i); setSaveState("idle");},
             title:"Marca cuál era la opción adecuada",
-            style:{marginBottom:8,padding:"6px 8px",borderRadius:"var(--border-radius-md)",cursor:"pointer",
-              border:best===i?"1px solid var(--color-text-info)":"1px solid transparent",
-              background:best===i?"var(--color-background-tertiary)":"transparent"}},
-            h("div", {style:{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}},
-              h("span", {style:{fontSize:12,color:opt.optimal?evColor(opt.ev):"var(--color-text-secondary)",fontWeight:(opt.optimal||opt.taken)?500:400,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}},
-                opt.optimal && h(Ico,{name:isTie?"approx":"check",size:12,color:isTie?"var(--color-text-info)":"var(--color-text-success)"}),
+            className:"option", "data-picked":best===i?"1":undefined},
+            h("div", {style:{display:"flex",justifyContent:"space-between",marginBottom:5,gap:8}},
+              h("span", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",fontWeight:opt.taken?600:400,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}},
+                h("span", {className:"option-mark", "aria-hidden":"true"}),
                 opt.label,
-                opt.optimal && h("span",{style:{fontSize:10,color:isTie?"var(--color-text-info)":"var(--color-text-success)",border:`0.5px solid ${isTie?"var(--color-text-info)":"var(--color-text-success)"}`,borderRadius:4,padding:"0 5px"}}, isTie?"≈ equivalente":"recomendada por el sistema"),
-                opt.taken && h("span",{style:{fontSize:10,color:"var(--color-text-tertiary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:4,padding:"0 5px"}},"lo que hiciste"),
-                best===i && h("span",{style:{fontSize:10,color:"var(--color-text-info)",border:"0.5px solid var(--color-text-info)",borderRadius:4,padding:"0 5px"}},"tu elección")
-              ),
-              h("span", {style:{fontSize:12,fontFamily:"var(--font-mono)",color:evColor(opt.ev)}}, fmtEV(opt.ev))
+                opt.taken && h("span",{className:"chip",style:{background:"transparent",borderColor:"var(--hairline-strong)"}},"lo que hiciste"),
+                best===i && h("span",{className:"chip",style:{color:"var(--signal-nav)",background:"transparent",borderColor:"var(--signal-nav)"}},"tu elección")
+              )
             ),
-            h("div", {style:{height:3,borderRadius:2,background:"var(--color-border-tertiary)",overflow:"hidden"}},
-              h("div", {style:{height:"100%",width:`${(opt.ev||0)*100}%`,background:opt.optimal?"var(--color-text-success)":evColor(opt.ev),borderRadius:2}})
-            ),
-            opt.consequence && h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",marginTop:3}}, opt.consequence)
+            opt.consequence && h("div", {style:{fontSize:"var(--t-xs)",color:"var(--ink-faint)",marginTop:4}}, opt.consequence)
           )
         )
       ),
-      h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:8}}, "Argumento"),
-      h("div", {style:{fontSize:13,lineHeight:1.7,color:"var(--color-text-primary)",borderLeft:"2px solid var(--color-border-secondary)",paddingLeft:12,marginBottom:14}}, d.argument),
+      ),
+      h(DecisionStage, {num:"03", title:"Tu razonamiento", tone:"player"},
       d.user_notes && d.user_notes.length>0 && h("div", {style:{marginBottom:14}},
-        h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-info)",marginBottom:8}}, "Tu razonamiento"),
+        h("p", {className:"sec"}, "Aportación del jugador"),
         ...d.user_notes.map((n,i) =>
-          h("div", {key:i, style:{fontSize:12.5,lineHeight:1.6,color:"var(--color-text-primary)",background:"var(--color-background-tertiary)",borderLeft:"2px solid var(--color-text-info)",borderRadius:"0 var(--border-radius-md) var(--border-radius-md) 0",padding:"8px 12px",marginBottom:6}},
+          h("div", {key:i, className:"prose", style:{background:"var(--elevated)",borderRadius:"0 var(--radius-md) var(--radius-md) 0",padding:"9px 13px",marginBottom:6}},
             h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginBottom:3,fontFamily:"var(--font-mono)"}},
               `de tu comparación · fuiste ${n.side.toUpperCase()} · ${n.winner==="tie"?"empate":("mejor: "+n.winner.toUpperCase())}${n.against_moment?(" · vs "+n.against_moment):""}`),
             n.note
           )
         )
       ),
+      h("div", {style:{marginTop:14}},
+        h("p", {className:"sec"}, "Tu contexto y justificación"),
+        best!=null && d.options[best] && h("div", {style:{fontSize:11,color:"var(--color-text-info)",marginBottom:6}},
+          `Opción que marcaste como adecuada: "${d.options[best].label}"`),
+        h("textarea", {value:note,
+          onChange:(e)=>{setNote(e.target.value); setSaveState("idle");},
+          onClick:(e)=>e.stopPropagation(),
+          "aria-label":"Tu contexto y justificación",
+          placeholder:"¿Qué pasó realmente (lo que el sistema no ve)? Marca arriba la opción adecuada y justifica por qué.",
+          className:"field", style:{minHeight:66}}),
+        h("div", {style:{display:"flex",gap:4,flexWrap:"wrap",marginTop:8,marginBottom:2}},
+          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",alignSelf:"center",marginRight:2}}, "Tipo:"),
+          ...MARK_TYPE_BTNS.map(m =>
+            h("button", {key:m.key,
+              onClick:(e)=>{e.stopPropagation(); setMarkType(markType===m.key?null:m.key); setSaveState("idle");},
+              className:"seg", "aria-pressed": markType===m.key, style:{padding:"4px 10px"}},
+              m.label))),
+        h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",margin:"4px 2px 0",lineHeight:1.5}},
+          markType ? MARK_TYPE_HELP[markType] : "Elige el tipo que mejor explica la jugada. Solo «decisión» entrena al learner."),
+        h("div", {style:{display:"flex",alignItems:"center",gap:10,marginTop:6,flexWrap:"wrap"}},
+          (function(){
+            const needsType = best!=null && !markType;
+            return h("button", {disabled:needsType,
+              onClick:async(e)=>{e.stopPropagation(); if(needsType) return;
+                setSaveState("saving"); const ok=await onSave(d.id,{note,best_option:best,mark_type:markType}); setSaveState(ok?"success":"error");},
+              title: needsType ? "Elige el tipo de marca" : "",
+              className:"btn btn-primary"},
+              "Guardar razonamiento");
+          })(),
+          saveState!=="idle" && h("span", {className:"request-state", "data-state":saveState, role:"status", "aria-live":"polite"}, h(Ico,{name:saveState==="success"?"check":saveState==="error"?"x":"alert",size:12}), saveState==="saving"?"guardando…":saveState==="success"?"guardado":"no se pudo guardar; intenta de nuevo"),
+          (best!=null && !markType) && h("span", {style:{fontSize:10,color:"var(--signal-warn)"}}, "elige el tipo de marca"),
+          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)"}}, "Se guarda en esta decisión, aparte del feedback A/B de Calibrar.")
+        )
+      ),
+      ),
+      h(DecisionStage, {num:"04", icon:fb==="agree"?"✓":fb==="equivalent"?"≈":fb==="disagree"?"×":"?", title:"Calibración / resultado", tone:fb||"risk", marker:true},
+      // El desglose auditable vive AQUI, despues de que el jugador ya eligio:
+      // sale del picker para no anclarlo, pero no desaparece del sistema.
+      h("p", {className:"sec"}, "Lo que recomendaba el programa"),
+      isTie && h("div", {className:"note note-nav", style:{color:"var(--signal-nav)",marginBottom:"var(--s3)",display:"flex",alignItems:"flex-start",gap:6}},
+        h(Ico,{name:"approx",size:12}),
+        h("span",{}, `Decisión cercana: las dos mejores opciones son prácticamente equivalentes (Δ ${tieGap.toFixed(2)}). Elegir la tuya no es un error — si crees que ambas valen, marca "≈ equivalentes" en vez de "se equivoca".`)),
+      h("div", {style:{marginBottom:"var(--s5)"}},
+        ...d.options.map((opt,i) =>
+          h("div", {key:i, style:{marginBottom:7}},
+            h("div", {style:{display:"flex",justifyContent:"space-between",gap:8,marginBottom:4}},
+              h("span", {style:{fontSize:"var(--t-xs)",color:opt.optimal?evColor(opt.ev):"var(--ink-soft)",
+                fontWeight:opt.optimal?600:400,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}},
+                opt.optimal && h(Ico,{name:isTie?"approx":"check",size:12,color:isTie?"var(--signal-nav)":"var(--signal-ok)"}),
+                opt.label,
+                opt.optimal && h("span",{className:"chip",style:{color:isTie?"var(--signal-nav)":"var(--signal-ok)",background:"transparent",borderColor:isTie?"var(--signal-nav)":"var(--signal-ok)"}}, isTie?"≈ equivalente":"recomendada por el sistema"),
+                best===i && h("span",{className:"chip",style:{color:"var(--signal-nav)",background:"transparent",borderColor:"var(--signal-nav)"}},"tu elección")),
+              h("span", {className:"mono", style:{fontSize:"var(--t-xs)",color:evColor(opt.ev)}}, fmtEV(opt.ev))),
+            h("div", {className:"meter"},
+              h("i", {style:{width:`${(opt.ev||0)*100}%`,background:opt.optimal?"var(--signal-ok)":evColor(opt.ev)}})))
+        )
+      ),
+      // "reward" era jerga interna sin explicacion en la UI.
+      d.reward_score!=null && h("div", {className:"well", style:{marginBottom:"var(--s5)"}},
+        h("div", {style:{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}},
+          h("span", {className:"sec", style:{marginBottom:0}}, "Resultado posterior"),
+          h("span", {className:"mono", style:{fontSize:"var(--t-xs)",fontWeight:600,
+            color:d.reward_score>0?"var(--signal-ok)":(d.reward_score<0?"var(--signal-bad)":"var(--ink-faint)")}},
+            `${d.reward_score>0?"+":""}${d.reward_score}`)),
+        h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",lineHeight:1.55,marginTop:3}},
+          "Resume lo que pasó en los ~45 s siguientes. Describe el desenlace, no juzga la decisión: una decisión correcta puede acabar mal y una mala puede salir bien.")),
       h("div", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
-        d.has_clip && h("button", {onClick:(e)=>{e.stopPropagation();onClip(d.id)}, style:{fontSize:12,display:"flex",alignItems:"center",gap:4,color:"var(--color-text-info)",padding:"4px 0"}},
-          h(Ico,{name:"play",size:12}), clipOpen?"Ocultar clip":"Ver clip"
-        ),
         h("div", {style:{marginLeft:"auto",display:"flex",gap:4,alignItems:"center"}},
-          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginRight:2}}, "El análisis del programa:"),
+          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginRight:2}}, "Tu veredicto sobre el análisis:"),
           ...FB_BTNS.map(f =>
-            h("button", {key:f.key, onClick:(e)=>{e.stopPropagation();onFb(d.id,f.key)},
-              style:{fontSize:11,display:"flex",alignItems:"center",gap:3,
-                color:fb===f.key?"var(--color-text-primary)":"var(--color-text-tertiary)",
-                background:fb===f.key?"var(--color-background-tertiary)":"transparent",
-                border:fb===f.key?"0.5px solid var(--color-border-secondary)":"0.5px solid transparent",
-                borderRadius:"var(--border-radius-md)",padding:"4px 9px"}},
+            h("button", {key:f.key, disabled:feedbackState==="saving", onClick:async(e)=>{e.stopPropagation(); setFeedbackState("saving"); const ok=await onFb(d.id,f.key); setFeedbackState(ok?"success":"error");},
+              className:"seg", "aria-pressed": fb===f.key, style:fb===f.key ? (()=>{const c=f.key==="agree"?"success":f.key==="equivalent"?"warning":"danger";return {color:`var(--color-text-${c})`,background:`var(--color-background-${c})`,borderColor:`var(--color-text-${c})`,fontWeight:700};})() : undefined},
               h(Ico,{name:f.icon,size:12}), f.label
             )
           )
-        )
+        ),
+        feedbackState!=="idle" && h("span", {className:"request-state", "data-state":feedbackState, role:"status", "aria-live":"polite"}, h(Ico,{name:feedbackState==="success"?"check":feedbackState==="error"?"x":"alert",size:12}), feedbackState==="saving"?"guardando…":feedbackState==="success"?"veredicto guardado":"no se pudo guardar; intenta de nuevo")
       ),
-      // Marca HISTORICA (#25): la marca sigue guardada pero ya no entrena al
-      // learner porque el conjunto de opciones cambio bajo ella. Antes esto
-      // pasaba en silencio y la card la pintaba como si siguiera vigente.
       d.historical_mark && (function(){
         const hm = d.historical_mark;
         const fbL = hm.feedback==="disagree" ? "se equivoca"
                   : hm.feedback==="equivalent" ? "≈ equivalentes"
                   : hm.feedback==="agree" ? "acierta" : "sin veredicto";
         const mt = (MARK_TYPE_BTNS.find(m=>m.key===hm.mark_type)||{}).label;
-        return h("div", {style:{marginTop:14,padding:"10px 12px",
-            background:"var(--color-background-warning)",
-            border:"0.5px solid var(--color-text-warning)",
-            borderLeft:"3px solid var(--color-text-warning)",
-            borderRadius:"0 var(--border-radius-md) var(--border-radius-md) 0"}},
-          h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-warning)",marginBottom:6,display:"flex",alignItems:"center",gap:5}},
-            h(Ico,{name:"alert",size:12}), "Marca histórica — ya no entrena al learner"),
-          h("div", {style:{fontSize:11.5,lineHeight:1.6,color:"var(--color-text-secondary)",marginBottom:8}},
-            hm.reason==="options_changed"
-              ? "Las opciones de esta decisión cambiaron desde que la marcaste, así que tu elección apunta a un conjunto que ya no existe. La marca se conserva íntegra, pero no cuenta para calibrar los pesos. Para que vuelva a contar hay que marcarla de nuevo contra las opciones de arriba."
-              : "Esta marca es anterior a la versión actual de la decisión y no guarda registro de contra qué opciones se hizo, así que no se puede saber a cuál apuntaba. La marca se conserva íntegra, pero no cuenta para calibrar los pesos. Para que vuelva a contar hay que marcarla de nuevo contra las opciones de arriba."),
-          h("div", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",marginBottom:6}},
-            [hm.marked_at ? ("marcada el " + String(hm.marked_at).slice(0,10)) : "fecha desconocida",
-             "marcaste: " + fbL, mt ? ("tipo: " + mt) : null].filter(Boolean).join(" · ")),
-          hm.chosen_action_id && h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)",marginBottom:4}},
-            "Opción que elegiste entonces: ", h("strong",{}, hm.chosen_action_label||hm.chosen_action_id)),
+        return h("div", {style:{marginTop:14,padding:"10px 12px",background:"var(--color-background-warning)",border:"1px solid color-mix(in oklab,var(--signal-warn) 45%,var(--hairline))",borderRadius:"var(--radius-md)"}},
+          h("div", {className:"sec", style:{color:"var(--signal-warn)",display:"flex",alignItems:"center",gap:5}}, h(Ico,{name:"alert",size:12}), "Marca histórica — ya no entrena al learner"),
+          h("div", {style:{fontSize:11.5,lineHeight:1.6,color:"var(--color-text-secondary)",marginBottom:8}}, hm.reason==="options_changed" ? "Las opciones de esta decisión cambiaron desde que la marcaste. La marca se conserva, pero no calibra los pesos hasta que vuelvas a evaluarla." : "Esta marca no conserva las opciones contra las que se hizo. Se mantiene como historial, pero no calibra los pesos hasta que vuelvas a evaluarla."),
+          h("div", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",marginBottom:6}}, [hm.marked_at ? ("marcada el " + String(hm.marked_at).slice(0,10)) : "fecha desconocida", "marcaste: " + fbL, mt ? ("tipo: " + mt) : null].filter(Boolean).join(" · ")),
+          hm.chosen_action_id && h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)",marginBottom:4}}, "Opción que elegiste entonces: ", h("strong",{}, hm.chosen_action_label||hm.chosen_action_id)),
           hm.previous_action_ids && hm.previous_action_ids.length>0
-            ? h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)"}},
-                "Opciones de entonces: " + hm.previous_action_ids.join(" · "))
-            : h("div", {style:{fontSize:11.5,color:"var(--color-text-tertiary)"}},
-                "No se conservó registro de las opciones de entonces."),
-          hm.note && h("div", {style:{fontSize:12.5,lineHeight:1.6,color:"var(--color-text-primary)",
-              background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",
-              padding:"8px 10px",marginTop:8,whiteSpace:"pre-wrap"}}, hm.note)
+            ? h("div", {style:{fontSize:11.5,color:"var(--color-text-secondary)"}}, "Opciones de entonces: " + hm.previous_action_ids.join(" · "))
+            : h("div", {style:{fontSize:11.5,color:"var(--color-text-tertiary)"}}, "No se conservó registro de las opciones de entonces."),
+          hm.note && h("div", {style:{fontSize:12.5,lineHeight:1.6,color:"var(--color-text-primary)",background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",padding:"8px 10px",marginTop:8,whiteSpace:"pre-wrap"}}, hm.note)
         );
       })(),
-      h("div", {style:{marginTop:14}},
-        h("p", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-info)",marginBottom:6}}, "Tu contexto y justificación"),
-        best!=null && d.options[best] && h("div", {style:{fontSize:11,color:"var(--color-text-info)",marginBottom:6}},
-          `Opción que marcaste como adecuada: "${d.options[best].label}"`),
-        h("textarea", {value:note,
-          onChange:(e)=>{setNote(e.target.value); setSaved(false);},
-          onClick:(e)=>e.stopPropagation(),
-          placeholder:"¿Qué pasó realmente (lo que el sistema no ve)? Marca arriba la opción adecuada y justifica por qué.",
-          style:{width:"100%",minHeight:64,fontSize:12.5,lineHeight:1.5,padding:"8px 10px",boxSizing:"border-box",
-            borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",
-            background:"var(--color-background-primary)",color:"var(--color-text-primary)",resize:"vertical",fontFamily:"inherit"}}),
-        h("div", {style:{display:"flex",gap:4,flexWrap:"wrap",marginTop:8,marginBottom:2}},
-          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",alignSelf:"center",marginRight:2}}, "Tipo:"),
-          ...MARK_TYPE_BTNS.map(m =>
-            h("button", {key:m.key,
-              onClick:(e)=>{e.stopPropagation(); setMarkType(markType===m.key?null:m.key); setSaved(false);},
-              style:{fontSize:11,padding:"3px 9px",borderRadius:"var(--border-radius-md)",cursor:"pointer",
-                color:markType===m.key?"var(--color-text-primary)":"var(--color-text-tertiary)",
-                background:markType===m.key?"var(--color-background-tertiary)":"transparent",
-                border:markType===m.key?"0.5px solid var(--color-border-secondary)":"0.5px solid transparent"}},
-              m.label))),
-        // Guia del tipo (feedback 2026-07-18: "mixta" ambigua con 2+ factores):
-        // para el sistema solo importa si fue decision PURA (es lo unico que
-        // entrena al learner); todo lo demas es equivalente entre si.
-        h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",margin:"4px 2px 0",lineHeight:1.5}},
-          "Solo «decisión» entrena al learner. Pregúntate: ¿con ejecución perfecta, la decisión seguía siendo mala? Sí → decisión · No → ejecución · Ambas → mixta (da igual cuántas cosas más fallaran)."),
-        h("div", {style:{display:"flex",alignItems:"center",gap:10,marginTop:6,flexWrap:"wrap"}},
-          (function(){
-            const needsType = best!=null && !markType;
-            return h("button", {disabled:needsType,
-              onClick:(e)=>{e.stopPropagation(); if(needsType) return;
-                onSave(d.id,{note,best_option:best,mark_type:markType}); setSaved(true);},
-              title: needsType ? "Elige el tipo de marca" : "",
-              style:{fontSize:12,color:"#0e0e11",background:"var(--color-text-info)",border:"none",
-                borderRadius:"var(--border-radius-md)",padding:"5px 12px",
-                cursor:needsType?"not-allowed":"pointer",opacity:needsType?0.5:1,fontWeight:500}},
-              "Guardar contexto");
-          })(),
-          saved && h("span", {style:{fontSize:11,color:"var(--color-text-success)",display:"flex",alignItems:"center",gap:3}}, h(Ico,{name:"check",size:12}), "guardado"),
-          (best!=null && !markType) && h("span", {style:{fontSize:10,color:"var(--color-text-danger)"}}, "elige el tipo de marca"),
-          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)"}}, "Se guarda en esta decisión, aparte del feedback A/B de Calibrar.")
-        )
       ),
-      clipOpen && d.has_clip && h("video", {ref:clipVidRef, controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
-        onLoadedMetadata:(e)=>{ const mo = momentMs!=null?momentMs:d.moment_ms; const off=(d.clip_offset_s||0)+(mo!=null?(mo-d.game_time_ms)/1000:0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
-        onError:(e)=>{e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:12px;margin-top:8px">Clip no disponible en disco (ruta movida o eliminada).</div>');e.target.remove();}}),
-      clipOpen && d.has_clip && d.clip_offset_s!=null && h("div",{className:"muted",style:{fontSize:11,marginTop:4,fontFamily:"var(--font-mono)"}},
-        `clip @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")} · seek −5s para contexto`)
     )
   );
 }
 
 function PatternCard({p}){
-  const det = DET[p.detector] || {label:p.detector, acc:"#888"};
+  const det = DET[p.detector] || {label:p.detector, acc:"var(--ink-faint)"};
   const tr = trendInfo(p.trend);
   return h("div", {style:{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"16px 18px",marginBottom:10,position:"relative",overflow:"hidden"}},
     h("div", {style:{position:"absolute",right:16,top:6,fontSize:60,fontWeight:700,color:"var(--color-border-tertiary)",fontFamily:"var(--font-mono)",lineHeight:1,pointerEvents:"none",userSelect:"none"}}, p.occ),
     h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},
-      h("span", {style:{fontSize:11,fontWeight:500,color:tr.c,background:`${tr.c}1f`,padding:"2px 8px",borderRadius:"var(--border-radius-md)",display:"inline-flex",alignItems:"center",gap:4}}, h(Ico,{name:tr.icon,size:11}), tr.label),
-      h("span", {style:{fontSize:11,color:det.acc,background:`${det.acc}1f`,padding:"2px 8px",borderRadius:"var(--border-radius-md)"}}, det.label)
+      h("span", {style:{fontSize:11,fontWeight:500,color:tr.c,background:tint(tr.c,12),padding:"2px 8px",borderRadius:"var(--border-radius-md)",display:"inline-flex",alignItems:"center",gap:4}}, h(Ico,{name:tr.icon,size:11}), tr.label),
+      h("span", {style:{fontSize:11,color:det.acc,background:tint(det.acc,12),padding:"2px 8px",borderRadius:"var(--border-radius-md)"}}, det.label)
     ),
     h("div", {style:{fontSize:14,fontWeight:500,marginBottom:4}}, p.title),
     h("div", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",marginBottom:10}},
@@ -364,48 +784,157 @@ function PatternCard({p}){
   );
 }
 
+// Una celda de la tira de estadisticas: separada por hairline vertical, no una
+// tarjeta. Cinco tarjetas identicas en fila es la retícula clonica de plantilla.
 function StatCard({label,val,sub}){
-  return h("div", {style:{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"10px 12px"}},
-    h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:4}}, label),
-    h("div", {style:{fontSize:20,fontWeight:500,fontFamily:"var(--font-mono)"}}, val),
-    h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginTop:3}}, sub)
+  return h("div", {className:"stat"},
+    h("div", {className:"lbl"}, label),
+    h("div", {className:"stat-val"}, val),
+    h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",lineHeight:1.4}}, sub)
   );
 }
 
-function MatchItem({m, active, onClick, disagree, reviewed}){
+// Antiguedad en lenguaje natural. Sale de game_start_ms crudo: la fecha ya
+// formateada ("5 ago") no sirve para restar, y "hace 5 dias" es lo que de verdad
+// se usa para situar una partida en la memoria.
+function fmtAge(startMs){
+  if(startMs==null) return null;
+  // Dias de CALENDARIO, no horas transcurridas: una partida de anoche a las
+  // 23:00 esta a 10 horas, pero para quien la recuerda fue "ayer", no "hoy".
+  const at = new Date(startMs), now = new Date();
+  const dayOf = x => Math.floor(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / 86400000);
+  const d = dayOf(now) - dayOf(at);
+  if(d < 0) return null;
+  if(d === 0) return "hoy";
+  if(d === 1) return "ayer";
+  if(d < 30) return `hace ${d} días`;
+  const mo = Math.floor(d / 30);
+  return mo === 1 ? "hace 1 mes" : `hace ${mo} meses`;
+}
+
+// Distribucion de detectores de una partida: icono + conteo, en orden fijo. El
+// orden estable es lo que permite comparar dos partidas de un vistazo sin leer
+// las etiquetas, igual que la build de OP.GG. Los detectores sin decisiones no
+// se dibujan: un cero ocupa sitio y no informa.
+const DET_ORDER = ["death_v1", "objective_readiness_v1", "trade_v1", "tempo_v1"];
+function DetectorMix({counts, size}){
+  if(!counts) return null;
+  const present = DET_ORDER.filter(k => (counts[k]||0) > 0);
+  if(!present.length) return null;
+  return h("span", {className:"detmix"},
+    ...present.map(k => {
+      const det = DET[k] || {label:k, acc:"var(--ink-faint)"};
+      return h("span", {key:k, className:"detmix-item", title:`${counts[k]} de ${det.label.toLowerCase()}`},
+        h(DetIcon, {detector:k, size:size||12, color:det.acc}),
+        h("span", {className:"mono"}, String(counts[k])));
+    }));
+}
+
+function MatchItem({m, active, onClick, disagree, reviewed, wide}){
   const total = m.decisions_count||0;
   const done = total>0 && reviewed>=total;
   const partial = reviewed>0 && !done;
   const mins = m.duration_s ? Math.round(m.duration_s/60) : null;
-  return h("button", {onClick, title: done?"revisada completa":(partial?`${reviewed}/${total} decisiones revisadas`:""), style:{
-      display:"block", width:"100%", textAlign:"left", marginBottom:6,
-      padding:"8px 10px", borderRadius:"var(--border-radius-md)",
-      border: active ? "0.5px solid var(--color-border-secondary)" : "0.5px solid var(--color-border-tertiary)",
-      borderLeft: done ? "3px solid var(--color-text-success)" : (partial ? "3px solid var(--color-text-info)" : undefined),
-      background: active ? "var(--color-background-tertiary)" : "var(--color-background-secondary)",
-    }},
-    h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3}},
-      done && h(Ico,{name:"check",size:12,color:"var(--color-text-success)"}),
-      h("span", {style:{fontSize:12,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}, m.champion),
-      m.win!=null && h("span", {style:{fontSize:10,fontWeight:600,color:m.win?"var(--color-text-success)":"var(--color-text-danger)"}}, m.win?"V":"D"),
-      disagree>0 && h("span", {title:`${disagree} decisión(es) marcadas "se equivoca"`,
-        style:{fontSize:9,fontWeight:700,color:"var(--color-text-danger)",background:"var(--color-background-danger)",
-          padding:"1px 5px",borderRadius:"var(--border-radius-md)",display:"flex",alignItems:"center",gap:2}},
-        "✕", String(disagree)),
-      h("span", {style:{marginLeft:"auto",fontSize:11,fontFamily:"var(--font-mono)",
-        color: done?"var(--color-text-success)":(partial?"var(--color-text-info)":"var(--color-text-secondary)")}},
-        reviewed>0 ? `${reviewed}/${total}` : String(total))
-    ),
-    h("div", {style:{fontSize:10,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
-      `${m.cohort} · ${m.date}` + (mins!=null ? ` · ${mins} min` : ""))
+  // Fila de lista, no tarjeta: el avance se lee en el glifo y en el contador
+  // mono, que ademas no dependen del color para distinguirse.
+  return h("button", {onClick, "aria-pressed":!!active,
+    title: [m.date, m.cohort, done ? "revisada completa" : (partial ? `${reviewed}/${total} decisiones revisadas` : null)].filter(Boolean).join(" · "),
+    // El estado por defecto lo pinta la receta .match-row; aqui solo se declaran
+    // las desviaciones, para que la celda base no quede en transparente y vuelva
+    // a fundirse con el panel.
+    className:"row match-row"+(wide?" match-row-wide":""), "data-active":active?"1":undefined, style:{
+      background: done ? "var(--wash-ok)" : (active ? "var(--elevated)" : undefined),
+      borderColor: done ? "color-mix(in oklab,var(--signal-ok) 45%,var(--hairline))"
+                        : (active ? "var(--signal-nav)" : undefined)}},
+    h("span", {className:"portrait", "aria-hidden":"true"},
+      m.champion_icon
+        ? h("img", {src:m.champion_icon, alt:"", width:34, height:34, loading:"lazy", decoding:"async"})
+        : h("span", {className:"portrait-fb"}, (m.champion||"?").slice(0,1))),
+    h("span", {className:"match-body"},
+      // Linea 1: quien y como acabo. El nombre manda, asi que nada mas compite
+      // aqui por el ancho -- el KDA baja a la linea 2 (a 206px truncaba
+      // "Janna" a "J" y partia "29 min" en dos renglones).
+      h("div", {style:{display:"flex",alignItems:"center",gap:5,marginBottom:3}},
+        h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0}}, m.champion),
+        m.win!=null && h("span", {title:m.win?"victoria":"derrota",
+          style:{fontSize:"var(--t-micro)",fontWeight:700,flexShrink:0,color:m.win?"var(--signal-ok)":"var(--signal-bad)"}}, m.win?"V":"D"),
+        disagree>0 && h("span", {title:`${disagree} decisión(es) marcadas "se equivoca"`,
+          style:{fontSize:"var(--t-micro)",fontWeight:700,color:"var(--signal-bad)",background:"var(--wash-bad)",
+            padding:"1px 5px",borderRadius:"var(--radius-sm)",display:"flex",alignItems:"center",gap:2,flexShrink:0}},
+          "✕", String(disagree)),
+        h("span", {className:"mono", style:{marginLeft:"auto",display:"flex",alignItems:"center",gap:3,flexShrink:0,
+          fontSize:"var(--t-micro)",color: done?"var(--signal-ok)":(partial?"var(--signal-nav)":"var(--ink-soft)")}},
+          done && h(Ico,{name:"check",size:11,color:"var(--signal-ok)"}),
+          reviewed>0 ? `${reviewed}/${total}` : String(total))
+      ),
+      // Linea 2: el KDA abre como bloque numerico prominente y la metadata lo
+      // sigue en tinta tenue, en una sola linea sin cortes.
+      h("div", {style:{display:"flex",alignItems:"baseline",gap:7,whiteSpace:"nowrap",overflow:"hidden"}},
+        m.kills!=null && m.deaths!=null && m.assists!=null && h("span", {className:"mono kda", title:`${m.kills} asesinatos / ${m.deaths} muertes / ${m.assists} asistencias`},
+          m.kills, h("span",{className:"kda-sep"},"/"), m.deaths, h("span",{className:"kda-sep"},"/"), m.assists),
+        h("span", {className:"mono", style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",overflow:"hidden",textOverflow:"ellipsis"}},
+          // Solo fecha y duracion: es lo que se usa para reconocer la partida.
+          // La liga sale del renglon (a este ancho se cortaba en "m…") y vive en
+          // el title -- el selector de cuenta ya acota la cohorte.
+          // En la fila ancha manda la antiguedad ("hace 2 días"), que es como se
+          // situa una partida al recordarla; la fecha exacta pasa al title para
+          // no repetir el mismo dato dos veces en el mismo renglon.
+          [(wide && fmtAge(m.game_start_ms)) || m.date, mins!=null ? `${mins} min` : null].filter(Boolean).join(" · ")),
+        wide && h("span", {style:{marginLeft:"auto"}}, h(DetectorMix, {counts:m.detector_counts}))
+      ))
+  );
+}
+
+// Ficha de la partida seleccionada. Responde las dos preguntas con las que se
+// entra: "cual es esta partida" y "que me falta revisar".
+function MatchSummary({m, reviewed, onBack}){
+  if(!m) return null;
+  const total = m.decisions_count || 0;
+  const done = total>0 && reviewed>=total;
+  const mins = m.duration_s ? Math.round(m.duration_s/60) : null;
+  const age = fmtAge(m.game_start_ms);
+  return h("div", {className:"panel", style:{marginBottom:"var(--s5)"}},
+    h("div", {className:"panel-head"},
+      h("span", {className:"lbl"}, "Partida"),
+      onBack && h("button", {onClick:onBack, className:"btn-quiet", style:{marginLeft:"auto",fontSize:"var(--t-xs)"}},
+        "← Todas las partidas")),
+    h("div", {style:{display:"flex",gap:"var(--s4)",alignItems:"center",flexWrap:"wrap",padding:"var(--s4)"}},
+      h("span", {className:"portrait portrait-lg", "aria-hidden":"true"},
+        m.champion_icon
+          ? h("img", {src:m.champion_icon, alt:"", width:46, height:46, decoding:"async"})
+          : h("span", {className:"portrait-fb"}, (m.champion||"?").slice(0,1))),
+      h("div", {style:{minWidth:0}},
+        h("div", {style:{display:"flex",alignItems:"baseline",gap:7,flexWrap:"wrap"}},
+          h("span", {style:{fontSize:"var(--t-md)",fontWeight:600,fontFamily:"var(--font-display)"}}, m.champion),
+          m.role && m.role!=="—" && h("span", {className:"chip"}, ROLE_L[m.role]||m.role),
+          m.win!=null && h("span", {className:"chip chip-strong",
+            style:{color:m.win?"var(--signal-ok)":"var(--signal-bad)",
+              background:m.win?"var(--wash-ok)":"var(--wash-bad)"}}, m.win?"Victoria":"Derrota")),
+        h("div", {className:"mono", style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",marginTop:3}},
+          [age, m.date, mins!=null?`${mins} min`:null, m.cohort].filter(Boolean).join(" · "))),
+      m.kills!=null && h("div", {style:{marginLeft:"var(--s3)"}},
+        h("div", {className:"lbl"}, "KDA"),
+        h("div", {className:"mono kda", style:{fontSize:"var(--t-md)"}},
+          m.kills, h("span",{className:"kda-sep"},"/"), m.deaths, h("span",{className:"kda-sep"},"/"), m.assists)),
+      h("div", {style:{marginLeft:"auto",textAlign:"right"}},
+        h("div", {className:"lbl"}, "Revisadas"),
+        h("div", {className:"mono", style:{fontSize:"var(--t-md)",fontWeight:600,
+          color: done?"var(--signal-ok)":(reviewed>0?"var(--signal-nav)":"var(--ink-soft)"),
+          display:"flex",alignItems:"center",gap:4,justifyContent:"flex-end"}},
+          done && h(Ico,{name:"check",size:13,color:"var(--signal-ok)"}),
+          `${reviewed}/${total}`)),
+      h("div", null,
+        h("div", {className:"lbl", style:{marginBottom:3}}, "Decisiones"),
+        h(DetectorMix, {counts:m.detector_counts, size:13}))
+    )
   );
 }
 
 // Summoner's Rift landmarks in world coords (0..M, y up). Drawn vectorially.
 const SR_BLUE = [1600, 1600], SR_RED = [13400, 13400];
 const SR_DRAGON = [9866, 4414], SR_BARON = [5007, 10471];
-const timeHue = t => `hsl(${Math.round(210 - 170*t)}, 70%, 60%)`;  // 0=blue start, 1=amber end
-const rewardStroke = v => v==null ? "#5a5a66" : (v>0 ? "var(--color-text-success)" : (v<0 ? "var(--color-text-danger)" : "#5a5a66"));
+const timeHue = t => `color-mix(in oklab, var(--signal-nav) ${Math.round((1-t)*100)}%, var(--signal-warn))`;
+const rewardStroke = v => v==null ? "var(--ink-faint)" : (v>0 ? "var(--color-text-success)" : (v<0 ? "var(--color-text-danger)" : "var(--ink-faint)"));
 
 function MatchMap({data, fdet, expId, onSelect, onHover}){
   const M = data.map_max || 15000;
@@ -413,7 +942,7 @@ function MatchMap({data, fdet, expId, onSelect, onHover}){
   const path = data.path || [], decs = data.decisions || [];
   const detsPresent = [...new Set(decs.map(d => d.detector))];
   const lane = pts => h("polyline", {points:pts.map(p=>`${p[0]},${fy(p[1])}`).join(" "),
-    fill:"none", stroke:"#22323f", strokeWidth:300, strokeLinejoin:"round", strokeLinecap:"round", opacity:0.7});
+    fill:"none", stroke:"var(--map-river)", strokeWidth:300, strokeLinejoin:"round", strokeLinecap:"round", opacity:0.7});
   // Route as time-colored segments (blue start -> amber end) conveys flow/evolution.
   const segs = [];
   for(let i=1;i<path.length;i++){
@@ -422,35 +951,35 @@ function MatchMap({data, fdet, expId, onSelect, onHover}){
       stroke:timeHue(t), strokeWidth:130, opacity:0.65, strokeLinecap:"round"}));
   }
   return h("div", {style:{marginBottom:16}},
-    h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:6}}, "Mapa de la partida"),
-    h("svg", {viewBox:`0 0 ${M} ${M}`, style:{width:"100%",maxWidth:420,aspectRatio:"1 / 1",display:"block",background:"#0a1016",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}},
-      h("line", {x1:0,y1:0,x2:M,y2:M,stroke:"#16313f",strokeWidth:1100,strokeLinecap:"round",opacity:0.6}),
+    h("div", {className:"sec"}, "Mapa de la partida"),
+    h("svg", {viewBox:`0 0 ${M} ${M}`, style:{width:"100%",maxWidth:420,aspectRatio:"1 / 1",display:"block",background:"var(--sunken)",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}},
+      h("line", {x1:0,y1:0,x2:M,y2:M,stroke:"var(--map-lane)",strokeWidth:1100,strokeLinecap:"round",opacity:0.6}),
       lane([[1600,1600],[1600,13400],[13400,13400]]),   // top lane (left + top edges)
       lane([[1600,1600],[13400,1600],[13400,13400]]),   // bot lane (bottom + right edges)
       lane([[1600,1600],[13400,13400]]),                // mid lane (diagonal)
-      h("circle", {cx:SR_DRAGON[0],cy:fy(SR_DRAGON[1]),r:430,fill:"none",stroke:"#c97a3a",strokeWidth:75,opacity:0.75}),
-      h("circle", {cx:SR_BARON[0],cy:fy(SR_BARON[1]),r:430,fill:"none",stroke:"#8a5fc0",strokeWidth:75,opacity:0.75}),
-      h("circle", {cx:SR_BLUE[0],cy:fy(SR_BLUE[1]),r:780,fill:"#1d5fae",opacity:0.4}),
-      h("circle", {cx:SR_RED[0],cy:fy(SR_RED[1]),r:780,fill:"#b53b3b",opacity:0.4}),
+      h("circle", {cx:SR_DRAGON[0],cy:fy(SR_DRAGON[1]),r:430,fill:"none",stroke:"var(--pit-dragon)",strokeWidth:75,opacity:0.75}),
+      h("circle", {cx:SR_BARON[0],cy:fy(SR_BARON[1]),r:430,fill:"none",stroke:"var(--pit-baron)",strokeWidth:75,opacity:0.75}),
+      h("circle", {cx:SR_BLUE[0],cy:fy(SR_BLUE[1]),r:780,fill:"var(--map-blue-base)",opacity:0.4}),
+      h("circle", {cx:SR_RED[0],cy:fy(SR_RED[1]),r:780,fill:"var(--map-red-base)",opacity:0.4}),
       ...segs,
-      path.length>0 && h("circle", {cx:path[0].x,cy:fy(path[0].y),r:240,fill:"#e8e8ea",opacity:0.9}),  // start
+      path.length>0 && h("circle", {cx:path[0].x,cy:fy(path[0].y),r:240,fill:"var(--ink)",opacity:0.9}),  // start
       ...decs.map(d => {
-        const det = DET[d.detector] || {label:d.detector, acc:"#888"};
+        const det = DET[d.detector] || {label:d.detector, acc:"var(--ink-faint)"};
         const dim = (fdet && fdet!=="all" && d.detector!==fdet);
         return h("g", {key:d.id, opacity:dim?0.15:1, style:{cursor:"pointer"}, onClick:()=>onSelect(d.id), onMouseEnter:()=>onHover&&onHover(d.id)},
-          expId===d.id && h("circle", {cx:d.x,cy:fy(d.y),r:620,fill:"none",stroke:"#e8e8ea",strokeWidth:70,opacity:0.9}),
+          expId===d.id && h("circle", {cx:d.x,cy:fy(d.y),r:620,fill:"none",stroke:"var(--ink)",strokeWidth:70,opacity:0.9}),
           h("circle", {cx:d.x,cy:fy(d.y),r:380,fill:det.acc,fillOpacity:0.9,stroke:rewardStroke(d.reward_score),strokeWidth:95},
             h("title", null, `${det.label} · ${d.time} — ${d.moment}`)));
       })
     ),
     h("div", {style:{display:"flex",flexWrap:"wrap",gap:"3px 10px",marginTop:6}},
-      ...detsPresent.map(dt => { const det = DET[dt] || {label:dt,acc:"#888"};
+      ...detsPresent.map(dt => { const det = DET[dt] || {label:dt,acc:"var(--ink-faint)"};
         return h("span", {key:dt, style:{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:"var(--color-text-tertiary)"}},
           h("span", {style:{width:8,height:8,borderRadius:"50%",background:det.acc,display:"inline-block"}}), det.label); }),
       h("span", {style:{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:"var(--color-text-tertiary)"}},
-        h("span", {style:{width:8,height:8,borderRadius:"50%",border:"2px solid #c97a3a",display:"inline-block"}}), "foso de Dragón"),
+        h("span", {style:{width:8,height:8,borderRadius:"50%",border:"2px solid var(--pit-dragon)",display:"inline-block"}}), "foso de Dragón"),
       h("span", {style:{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:"var(--color-text-tertiary)"}},
-        h("span", {style:{width:8,height:8,borderRadius:"50%",border:"2px solid #8a5fc0",display:"inline-block"}}), "foso de Barón")
+        h("span", {style:{width:8,height:8,borderRadius:"50%",border:"2px solid var(--pit-baron)",display:"inline-block"}}), "foso de Barón")
     ),
     h("div", {className:"muted", style:{fontSize:10,marginTop:3}},
       `ruta azul→ámbar (inicio→fin) · borde verde/rojo = reward · clic para abrir`)
@@ -466,10 +995,10 @@ function MatchTimeline({data, fdet, expId, onSelect, onHover}){
   const LABEL = 64;
   const ticks = []; for(let s=300; s<maxT; s+=300) ticks.push(s);
   const pct = t => `${Math.min(100, Math.max(0, (t/maxT)*100))}%`;
-  const rstroke = rs => rs==null ? "#5a5a66" : (rs>0 ? "var(--color-text-success)" : (rs<0 ? "var(--color-text-danger)" : "#5a5a66"));
+  const rstroke = rs => rs==null ? "var(--ink-faint)" : (rs>0 ? "var(--color-text-success)" : (rs<0 ? "var(--color-text-danger)" : "var(--ink-faint)"));
   return h("div", {style:{marginBottom:16}},
-    h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:8}}, "Línea de tiempo"),
-    h("div", {style:{background:"#0a1016",border:"0.5px solid var(--color-border-tertiary)",borderRadius:8,padding:"10px 12px"}},
+    h("div", {className:"sec"}, "Línea de tiempo"),
+    h("div", {style:{background:"var(--sunken)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:8,padding:"10px 12px"}},
       h("div", {style:{display:"flex",marginBottom:4}},
         h("div", {style:{width:LABEL,flexShrink:0}}),
         h("div", {style:{position:"relative",flex:1,height:12}},
@@ -477,7 +1006,7 @@ function MatchTimeline({data, fdet, expId, onSelect, onHover}){
         )
       ),
       ...dets.map(dt => {
-        const det = DET[dt] || {label:dt,acc:"#888"};
+        const det = DET[dt] || {label:dt,acc:"var(--ink-faint)"};
         const rows = decs.filter(d => d.detector===dt);
         const dim = (fdet && fdet!=="all" && dt!==fdet);
         return h("div", {key:dt, style:{display:"flex",alignItems:"center",height:24,opacity:dim?0.2:1}},
@@ -489,7 +1018,7 @@ function MatchTimeline({data, fdet, expId, onSelect, onHover}){
               return h("div", {key:d.id, title:`${det.label} · ${d.time} — ${d.moment}`, onClick:()=>onSelect(d.id), onMouseEnter:()=>onHover&&onHover(d.id),
                 style:{position:"absolute",left:pct(d.game_time_ms/1000),top:"50%",transform:"translate(-50%,-50%)",
                   width:sel?16:12,height:sel?16:12,borderRadius:"50%",background:det.acc,
-                  border:`2px solid ${sel?"#e8e8ea":rstroke(d.reward_score)}`,cursor:"pointer",boxSizing:"border-box"}});
+                  border:`2px solid ${sel?"var(--ink)":rstroke(d.reward_score)}`,cursor:"pointer",boxSizing:"border-box"}});
             })
           )
         );
@@ -504,10 +1033,10 @@ function MatchTimeline({data, fdet, expId, onSelect, onHover}){
 function VizAnnotation({d, onOpen}){
   if(!d) return h("div", {className:"muted", style:{fontSize:11,padding:"8px 2px"}},
     "Pasa el cursor o haz clic en un punto del mapa / línea de tiempo para ver el detalle.");
-  const det = DET[d.detector] || {label:d.detector, acc:"#888"};
-  return h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderLeft:`3px solid ${det.acc}`,borderRadius:"0 8px 8px 0",padding:"10px 12px",background:"var(--color-background-secondary)",marginTop:10}},
+  const det = DET[d.detector] || {label:d.detector, acc:"var(--ink-faint)"};
+  return h("div", {className:"card", style:{padding:"11px 13px",marginTop:10}},
     h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}},
-      h("span", {style:{fontSize:11,fontWeight:500,color:det.acc,background:`${det.acc}22`,padding:"2px 8px",borderRadius:6}}, det.label),
+      h("span", {style:{fontSize:11,fontWeight:500,color:det.acc,background:tint(det.acc,13),padding:"2px 8px",borderRadius:6}}, det.label),
       h("span", {style:{fontSize:12,fontWeight:500}}, d.champion),
       h("span", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, d.time),
       h("div", {style:{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}},
@@ -536,8 +1065,8 @@ function WinProbChart({data}){
     segs.push(h("line", {key:i, x1:X(a.t_ms),y1:Y(a.prob),x2:X(b.t_ms),y2:Y(b.prob),
       stroke:up?"var(--color-text-success)":"var(--color-text-danger)", strokeWidth:3})); }
   return h("div", {style:{marginBottom:16}},
-    h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:6}}, "Ventaja / win-probability (proxy de oro)"),
-    h("svg", {viewBox:`0 0 ${W} ${H+24}`, style:{width:"100%",background:"#0a1016",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}},
+    h("div", {className:"sec"}, "Ventaja / win-probability (proxy de oro)"),
+    h("svg", {viewBox:`0 0 ${W} ${H+24}`, style:{width:"100%",background:"var(--sunken)",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}},
       h("line", {x1:0,y1:Y(0.5),x2:W,y2:Y(0.5),stroke:"var(--color-border-secondary)",strokeWidth:1,strokeDasharray:"6 6"}),
       ...ticks.map(s => h("g", {key:"t"+s},
         h("line", {x1:X(s*1000),y1:0,x2:X(s*1000),y2:H,stroke:"var(--color-border-tertiary)",strokeWidth:1,opacity:0.4}),
@@ -548,14 +1077,26 @@ function WinProbChart({data}){
       ...evs.map((e,i) => h("g", {key:"e"+i},
         h("title", null, `${e.kind} ${e.ours?"(nuestro)":"(enemigo)"}`),
         h("circle", {cx:X(e.t_ms),cy:H-9,r:9,fill:e.ours?"var(--color-text-success)":"var(--color-text-danger)",fillOpacity:0.9}),
-        h("text", {x:X(e.t_ms),y:H-5,fill:"#0a1016",fontSize:11,textAnchor:"middle",fontWeight:700}, KIND_INI[e.kind]||"?")))
+        h("text", {x:X(e.t_ms),y:H-5,fill:"var(--sunken)",fontSize:11,textAnchor:"middle",fontWeight:700}, KIND_INI[e.kind]||"?")))
     ),
     h("div", {className:"muted", style:{fontSize:10,marginTop:3}}, "verde = ventaja / rojo = desventaja · marcas: objetivos y torres (verde nuestro, rojo enemigo) · D dragón · B barón · H heraldo · T torre · I inhib")
   );
 }
 
 // #4 — "Which of my games does this resemble, and are they losses?"
-function SimilarMatches({match, onSelect}){
+const SIMILAR_DIM_PHRASES = {
+  "% muertes": ["más muertes detectadas", "menos muertes detectadas"],
+  "% trades": ["más trades detectados", "menos trades detectados"],
+  "% tempo": ["más señales de tempo", "menos señales de tempo"],
+  "% objetivos": ["más señales de objetivos", "menos señales de objetivos"],
+  "EV medio": ["EV medio más alto", "EV medio más bajo"],
+  "gap EV medio": ["gap EV medio más alto", "gap EV medio más bajo"],
+  "reward medio": ["reward medio más alto", "reward medio más bajo"],
+  "fuerza media": ["fuerza media más alta", "fuerza media más baja"],
+};
+function similarPhrase(shared){ return (SIMILAR_DIM_PHRASES[shared.dim] || [shared.dim+" alto", shared.dim+" bajo"])[shared.high ? 0 : 1]; }
+
+function SimilarMatches({match}){
   const [data, setData] = useState(null);
   useEffect(() => {
     let a = true; setData(null);
@@ -567,23 +1108,35 @@ function SimilarMatches({match, onSelect}){
   const nb = data.neighbors || [];
   if(!nb.length) return null;
   return h("div", {style:{marginTop:14, marginBottom:6}},
-    h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:6,display:"flex",gap:8,alignItems:"center"}},
+    h("div", {className:"sec", style:{display:"flex",gap:8,alignItems:"center"}},
       "Partidas similares",
       data.loss_rate_neighbors!=null && h("span", {style:{fontFamily:"var(--font-mono)",color:data.loss_rate_neighbors>=0.5?"var(--color-text-danger)":"var(--color-text-secondary)"}},
         `${Math.round(data.loss_rate_neighbors*100)}% derrotas`)
     ),
-    ...nb.map(n => h("button", {key:n.match_id, onClick:()=>onSelect(n.match_id),
-      style:{display:"block",width:"100%",textAlign:"left",border:"0.5px solid var(--color-border-tertiary)",borderRadius:6,background:"var(--color-background-secondary)",padding:"8px 10px",marginBottom:6}},
+    h("p", {style:{fontSize:11,color:"var(--color-text-tertiary)",margin:"0 0 7px",lineHeight:1.45}}, "Coinciden en el perfil de la partida, no necesariamente en la misma decisión."),
+    // Mismo anclaje por retrato que la lista de partidas: sin el, una partida
+    // similar solo se distingue por victoria/derrota y una fecha, y no hay forma
+    // de saber CUAL es sin abrirla.
+    ...nb.map(n => h("div", {key:n.match_id,
+      style:{display:"flex",gap:9,alignItems:"flex-start",borderBottom:"1px solid var(--hairline)",padding:"9px 0",marginBottom:2}},
+      h("span", {className:"portrait", "aria-hidden":"true", style:{width:30,height:30}},
+        n.champion_icon
+          ? h("img", {src:n.champion_icon, alt:"", width:30, height:30, loading:"lazy", decoding:"async"})
+          : h("span", {className:"portrait-fb"}, (n.champion||"?").slice(0,1))),
+      h("div", {style:{flex:1,minWidth:0}},
       h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:n.shared.length?4:0}},
-        h("span", {style:{fontSize:12,fontWeight:500}}, n.champion),
-        n.win!=null && h("span", {style:{fontSize:10,fontWeight:600,color:n.win?"var(--color-text-success)":"var(--color-text-danger)"}}, n.win?"V":"D"),
-        h("span", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, n.date),
-        h("span", {style:{marginLeft:"auto",fontSize:10,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, `dist ${n.distance}`)
+        h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600}}, n.champion),
+        n.win!=null && h("span", {title:n.win?"victoria":"derrota", style:{fontSize:"var(--t-micro)",fontWeight:700,color:n.win?"var(--signal-ok)":"var(--signal-bad)"}}, n.win?"V":"D"),
+        h("span", {className:"mono", style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)"}}, n.date),
+        // "dist 0.69" no dice nada sin conocer la metrica. Se nombra el grado de
+        // parecido en palabras y el numero crudo queda en el title, para quien lo
+        // quiera auditar. Menor distancia = mas parecida.
+        h("span", {className:"chip", style:{marginLeft:"auto"},
+          title:`Distancia entre perfiles de partida: ${n.distance} (0 = idéntica)`},
+          n.distance<=0.75 ? "muy parecida" : (n.distance<=0.9 ? "parecida" : "algo parecida"))
       ),
-      n.shared.length>0 && h("div", {style:{display:"flex",flexWrap:"wrap",gap:4}},
-        ...n.shared.map((s,i) => h("span", {key:i, style:{fontSize:10,color:"var(--color-text-secondary)",background:"var(--color-background-tertiary)",borderRadius:4,padding:"1px 6px"}},
-          `${s.dim} ${s.high?"alto":"bajo"}`))
-      )
+      n.shared.length>0 && h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-soft)",marginBottom:2}},
+        "Coincide en: "+n.shared.map(similarPhrase).join(" · ")))
     ))
   );
 }
@@ -594,11 +1147,11 @@ function phaseOf(ms){ const m=(ms||0)/60000; return m<14?"early":(m<25?"mid":"la
 // Decision card for side-by-side comparison in Calibrate: full context + clip.
 function CompareCard({d}){
   const [clip, setClip] = useState(false);
-  const det = DET[d.detector] || {label:d.detector, acc:"#888"};
+  const det = DET[d.detector] || {label:d.detector, acc:"var(--ink-faint)"};
   const chip = (t) => h("span", {style:{fontSize:10,color:"var(--color-text-secondary)",background:"var(--color-background-tertiary)",borderRadius:4,padding:"1px 6px"}}, t);
-  return h("div", {style:{flex:1,minWidth:0,border:"0.5px solid var(--color-border-tertiary)",borderTop:`3px solid ${det.acc}`,borderRadius:8,padding:12,background:"var(--color-background-secondary)"}},
+  return h("div", {className:"card", style:{flex:1,minWidth:0,padding:13}},
     h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}},
-      h("span", {style:{fontSize:11,fontWeight:500,color:det.acc,background:`${det.acc}22`,padding:"2px 8px",borderRadius:6}}, det.label),
+      h("span", {style:{fontSize:11,fontWeight:500,color:det.acc,background:tint(det.acc,13),padding:"2px 8px",borderRadius:6}}, det.label),
       h("span", {style:{fontSize:12,fontWeight:500}}, d.champion),
       h("span", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, `${d.time} · ${d.date}`)
     ),
@@ -614,7 +1167,7 @@ function CompareCard({d}){
     d.has_clip && h("button", {onClick:()=>setClip(c=>!c), style:{fontSize:11,display:"flex",alignItems:"center",gap:4,color:"var(--color-text-info)",padding:"2px 0"}},
       h(Ico,{name:"play",size:12}), clip?"Ocultar clip":`Ver clip${d.clip_offset_s!=null?` @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")}`:""}`),
     clip && d.has_clip && h("video", {controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
-      style:{width:"100%",borderRadius:6,marginTop:6,maxHeight:240,background:"#000"},
+      style:{width:"100%",borderRadius:6,marginTop:6,maxHeight:240,background:"var(--video-black)"},
       onLoadedMetadata:(e)=>{ const off=(d.clip_offset_s||0)+(d.moment_ms!=null?(d.moment_ms-d.game_time_ms)/1000:0)-5; if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
       onError:(e)=>{ e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:11px;margin-top:6px">Clip no disponible en disco.</div>'); e.target.remove(); }})
   );
@@ -626,15 +1179,18 @@ function Calibrate(){
   const [w, setW] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [requestState, setRequestState] = useState("idle");
   const loadPair = () => fetch("/api/pair").then(r=>r.json()).then(setPair).catch(()=>{});
   const loadW = () => fetch("/api/weights").then(r=>r.json()).then(setW).catch(()=>{});
   useEffect(() => { loadPair(); loadW(); }, []);
   const judge = (winner) => {
     if(busy || !pair || !pair.pair) return;
     const [a,b] = pair.pair; setBusy(true);
+    setRequestState("saving");
     fetch("/api/preference", {method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({a:a.id,b:b.id,winner,detector:pair.detector,note:note.trim()||null})})
-      .then(()=>{ setNote(""); loadPair(); loadW(); setBusy(false); }).catch(()=>setBusy(false));
+      .then(r=>{ if(!r.ok) throw new Error("preference"); setNote(""); loadPair(); loadW(); setBusy(false); setRequestState("success"); })
+      .catch(()=>{ setBusy(false); setRequestState("error"); });
   };
   const apply = () => fetch("/api/weights/apply",{method:"POST"}).then(r=>r.json()).then(()=>location.reload()).catch(()=>{});
   const reset = () => fetch("/api/weights/reset",{method:"POST"}).then(()=>location.reload()).catch(()=>{});
@@ -696,7 +1252,8 @@ function Calibrate(){
           h("button",{disabled:busy,onClick:()=>judge("a"),style:{...sBadge(false),fontSize:12,padding:"7px 16px",border:"0.5px solid var(--color-border-secondary)"}},"◄ A mejor"),
           h("button",{disabled:busy,onClick:()=>judge("tie"),title:"Las dos igual de buenas o igual de malas — son equivalentes (cuenta como juicio)",style:{...sBadge(false),fontSize:12,padding:"7px 14px",border:"0.5px solid var(--color-border-tertiary)"}},"Empate (equivalentes)"),
           h("button",{disabled:busy,onClick:()=>judge("skip"),title:"No comparable o sin contexto — no aporta, no la cuentes para calibrar",style:{...sBadge(false),fontSize:12,padding:"7px 14px",color:"var(--color-text-tertiary)",opacity:0.8}},"No aporta / saltar"),
-          h("button",{disabled:busy,onClick:()=>judge("b"),style:{...sBadge(false),fontSize:12,padding:"7px 16px",border:"0.5px solid var(--color-border-secondary)"}},"B mejor ►")
+          h("button",{disabled:busy,onClick:()=>judge("b"),style:{...sBadge(false),fontSize:12,padding:"7px 16px",border:"0.5px solid var(--color-border-secondary)"}},"B mejor ►"),
+          requestState!=="idle" && h("span", {className:"request-state", "data-state":requestState, role:"status", "aria-live":"polite"}, h(Ico,{name:requestState==="success"?"check":requestState==="error"?"x":"alert",size:12}), requestState==="saving"?"guardando…":requestState==="success"?"preferencia guardada":"no se pudo guardar; intenta de nuevo")
         )
       )
   );
@@ -731,18 +1288,16 @@ function ReviewQueue({queue, onJump, onRefresh, decisions, fbs, onFb, onSave}){
       h("button", {onClick:onRefresh, title:"Recalcula la cola con tu feedback más reciente",
         style:{...sBadge(false),fontSize:11,padding:"4px 10px",border:"0.5px solid var(--color-border-tertiary)"}}, "Refrescar cola")),
     items.length===0 && h("div",{className:"muted",style:{fontSize:12,padding:"16px 0",textAlign:"center"}},"Nada en desacuerdo. La fórmula coincide con todas tus marcas vigentes."),
-    ...items.map(x => { const det = DET[x.detector]||{label:x.detector,acc:"#888"};
+    ...items.map(x => { const det = DET[x.detector]||{label:x.detector,acc:"var(--ink-faint)"};
       const open = expId===x.id;
       const full = open ? decisions.find(d=>d.id===x.id) : null;
-      return h("div", {key:x.id, id:"rq-"+x.id, style:{marginBottom:6}},
+      return h("div", {key:x.id, id:"rq-"+x.id, className:"ticket", "data-open":open?"1":undefined},
         h("button", {onClick:()=>{ setExpId(open?null:x.id); setClipId(null); }, title: open?"Cerrar":"Revisar aquí mismo",
             style:{display:"block",width:"100%",textAlign:"left",
-            border:"0.5px solid var(--color-border-tertiary)",
-            borderLeft:`3px solid ${x.agree?"var(--color-text-success)":"var(--color-text-danger)"}`,
-            borderRadius: open ? "0 8px 0 0" : "0 8px 8px 0",
-            background: open ? "var(--color-background-tertiary)" : "var(--color-background-secondary)", padding:"9px 12px"}},
+            border:0,borderBottom:"1px solid var(--hairline)",
+            background: open ? "var(--surface)" : "transparent", padding:"11px 12px"}},
           h("div", {style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}},
-            h("span", {style:{fontSize:10,fontWeight:600,color:"#0e0e11",background:det.acc,padding:"1px 7px",borderRadius:5}}, det.label),
+            h("span", {style:{fontSize:10,fontWeight:600,color:"var(--bg)",background:det.acc,padding:"1px 7px",borderRadius:5}}, det.label),
             h("span", {style:{fontSize:12,fontWeight:500}}, x.moment),
             h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)",marginLeft:"auto"}}, `${x.time} · ${x.date}`),
             h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})),
@@ -750,27 +1305,27 @@ function ReviewQueue({queue, onJump, onRefresh, decisions, fbs, onFb, onSave}){
             `hiciste ${x.taken} (fit ${x.fit_taken==null?"—":x.fit_taken.toFixed(2)}) · marcaste ${x.best} (fit ${x.fit_best==null?"—":x.fit_best.toFixed(2)}) · `,
             h("span",{style:{color:x.agree?"var(--color-text-success)":"var(--color-text-danger)",fontWeight:600}}, x.agree?"fórmula de acuerdo":"fórmula en contra")),
           x.note && h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)"}}, x.note)),
-        open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+        open && h("div", {className:"row-body", style:{padding:"10px 12px 8px"}},
           full
             ? h(DecisionCard, {key:"rq-card-"+x.id, d:full, exp:true, onToggle:()=>setExpId(null),
                 fb:fbs[x.id], onFb, clipOpen:clipId===x.id, onClip:(id)=>setClipId(c=>c===id?null:id), onSave})
             : h("div",{className:"muted",style:{fontSize:12,padding:"8px 0"}},"No encontré la decisión en memoria; recarga la página (F5)."),
           h("div", {style:{display:"flex",gap:10,alignItems:"center",margin:"8px 2px 4px",flexWrap:"wrap"}},
-            h("button", {onClick:()=>goNext(x.id), style:{fontSize:12,color:"#0e0e11",background:"var(--color-text-info)",borderRadius:6,padding:"5px 12px",fontWeight:500}}, "Siguiente caso →"),
+            h("button", {onClick:()=>goNext(x.id), style:{fontSize:12,color:"var(--bg)",background:"var(--color-text-info)",borderRadius:6,padding:"5px 12px",fontWeight:500}}, "Siguiente caso →"),
             h("button", {onClick:()=>onJump(x), style:{fontSize:11,color:"var(--color-text-tertiary)",textDecoration:"underline"}}, "abrir en Decisiones (mapa y partida completa)"),
             h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginLeft:"auto"}}, 'Guarda con "Guardar contexto" dentro de la tarjeta antes de pasar.'))));
     })
   );
 }
 
-// Sesion de hoy (#16): 5-6 momentos SIN marcar en mezcla anti-sesgo (R4 del
-// contraste). Cada card salta a su decision (misma mecanica que Revision); al
-// marcar y refrescar, salen de la sesion.
+// Sesion de hoy (#16): 5-6 momentos SIN marcar en mezcla anti-sesgo. Cada card
+// salta a su decision (misma mecanica que Revision); al marcar y refrescar,
+// salen de la sesion.
 const SESSION_BADGE = {
-  dominant:  {label:"patrón dominante", color:"#ef4444"},
-  objective: {label:"objetivo de mayor costo", color:"#f59e0b"},
-  success:   {label:"acierto difícil", color:"#22c55e"},
-  other:     {label:"variedad", color:"#8b5cf6"},
+  dominant:  {label:"patrón dominante", color:"var(--det-death)"},
+  objective: {label:"objetivo de mayor costo", color:"var(--det-objective)"},
+  success:   {label:"acierto difícil", color:"var(--signal-ok)"},
+  other:     {label:"variedad", color:"var(--pit-baron)"},
 };
 function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefresh, onMore}){
   const [expId, setExpId] = useState(null);   // momento expandido INLINE (se revisa aquí, sin saltar de pestaña)
@@ -785,12 +1340,12 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
     h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
       h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
         `${data.moments.length} momentos · presupuesto ~20 min · `,
-        h("span", {style:{color: nDone===data.moments.length&&nDone>0 ? "#22c55e" : "var(--color-text-secondary)",fontWeight:600}},
+        h("span", {style:{color: nDone===data.moments.length&&nDone>0 ? "var(--signal-ok)" : "var(--color-text-secondary)",fontWeight:600}},
           `${nDone}/${data.moments.length} completados`)),
       h("button", {onClick:onRefresh, title:"Trae una tanda nueva (los momentos ya marcados salen de la cola)",
         style:{...sBadge(false),fontSize:11,padding:"4px 10px"}}, "Nueva sesión")
     ),
-    t && h("div", {style:{border:"0.5px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.07)",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:12,fontSize:12}},
+    t && h("div", {style:{border:"0.5px solid color-mix(in oklab,var(--signal-bad) 40%,transparent)",background:"color-mix(in oklab,var(--signal-bad) 8%,transparent)",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:12,fontSize:12}},
       `${t.count} de tus últimos ${t.last} overextends fueron en min ${t.min_from}-${t.min_to} — ahí vive el hábito ahora mismo.`),
     data.moments.length===0
       ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "Nada sin marcar — sesión al día.")
@@ -799,26 +1354,25 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
           const open = expId===mo.id;
           const moDone = isDone(mo.id);
           const full = open ? decisions.find(d=>d.id===mo.id) : null;
-          return h("div", {key:mo.id, id:"sv-"+mo.id, style:{marginBottom:8}},
+          return h("div", {key:mo.id, id:"sv-"+mo.id, className:"ticket", "data-open":open?"1":undefined},
             h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
               title: open ? "Cerrar" : mo.reason,
               style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",
-                border:"0.5px solid var(--color-border-tertiary)",
-                borderLeft:`3px solid ${moDone ? "#22c55e" : b.color}`,
-                borderRadius: open ? "0 8px 0 0" : "0 8px 8px 0",
-                background: open ? "var(--color-background-tertiary)" : "var(--color-background-secondary)",
-                padding:"10px 12px", opacity: moDone && !open ? 0.65 : 1, cursor:"pointer"}},
+                border:0,borderBottom:"1px solid var(--hairline)",
+                background: open ? "var(--surface)" : "transparent",
+                padding:"11px 12px", opacity: moDone && !open ? 0.6 : 1, cursor:"pointer"}},
               h("div", {style:{fontSize:15,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",width:18,flexShrink:0}}, String(i+1)),
               h("div", {style:{flex:1,minWidth:0}},
-                h("div", {style:{fontSize:12,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || mo.detector),
-                h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
-                  `${mo.champion} · ${mo.date} · ${mo.time}` + (mo.ev_gap!=null ? ` · gap EV ${mo.ev_gap.toFixed(2)}` : ""))
+                h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3,minWidth:0}},
+                  h(DetIcon, {detector:mo.detector, size:13, color:(DET[mo.detector]||{}).acc}),
+                  h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,color:"var(--ink)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || mo.detector)),
+                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time, evGap:mo.ev_gap})
               ),
-              moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid #22c55e55",background:"#22c55e14",color:"#22c55e",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
-              h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${b.color}55`,background:`${b.color}14`,color:b.color,whiteSpace:"nowrap",flexShrink:0}}, b.label),
+              moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid color-mix(in oklab,var(--signal-ok) 40%,transparent)",background:"color-mix(in oklab,var(--signal-ok) 12%,transparent)",color:"var(--signal-ok)",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
+              h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${tonedBorder(b.color)}`,background:tint(b.color,8),color:b.color,whiteSpace:"nowrap",flexShrink:0}}, b.label),
               h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})
             ),
-            open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+            open && h("div", {className:"row-body", style:{padding:"10px 12px 8px"}},
               full
                 ? h(DecisionCard, {key:"sv-card-"+mo.id, d:full, exp:true, onToggle:()=>setExpId(null),
                     fb:fbs[mo.id], onFb, clipOpen:clipId===mo.id, onClip:(id)=>setClipId(c=>c===id?null:id), onSave})
@@ -846,7 +1400,7 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
 // decision enriquecida, asi que la card se pinta directo (no depende del filtro
 // de cohorte global). Misma mecanica inline que Sesion de hoy: marcar -> verde.
 // El server excluye las ya marcadas, asi que "Actualizar cola" las quita y re-ordena.
-const TRADE_ACCENT = "#38bdf8";
+const TRADE_ACCENT = "var(--det-trade)";
 function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
   const [expId, setExpId] = useState(null);
   const [clipId, setClipId] = useState(null);
@@ -862,12 +1416,12 @@ function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
     h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
       h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
         `${total} trades perdidos sin marcar · `,
-        h("span", {style:{color: nDone>0 ? "#22c55e" : "var(--color-text-secondary)",fontWeight:600}},
+        h("span", {style:{color: nDone>0 ? "var(--signal-ok)" : "var(--color-text-secondary)",fontWeight:600}},
           `${nDone} marcado${nDone===1?"":"s"} en esta tanda`)),
       h("button", {onClick:onRefresh, title:"Quita de la cola las que marcaste y re-ordena el resto por informatividad",
         style:{...sBadge(false),fontSize:11,padding:"4px 10px"}}, "Actualizar cola")
     ),
-    h("div", {style:{border:"0.5px solid rgba(56,189,248,0.35)",background:"rgba(56,189,248,0.07)",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:12,fontSize:12,lineHeight:1.5}},
+    h("div", {style:{border:"0.5px solid color-mix(in oklab,var(--det-trade) 40%,transparent)",background:"color-mix(in oklab,var(--det-trade) 8%,transparent)",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:12,fontSize:12,lineHeight:1.5}},
       "Orden = informatividad para el learner: cobertura por campeón × fase × banda de oro (en trade_v1 el Fisher es casi plano, así que domina la cobertura). ",
       h("b", null, "Marca de arriba hacia abajo"),
       " — cada marca cae donde más le enseña al BT y donde menos se apelotona. El criterio: cambiar daño solo con ventana (maná/cooldowns/posición); si no, respetar y farmear."),
@@ -877,26 +1431,25 @@ function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
           const open = expId===mo.id;
           const moDone = isDone(mo.id);
           const bucket = mo.rank_why ? (mo.rank_why.split("·")[1]||"").trim() : "trade";
-          return h("div", {key:mo.id, id:"tq-"+mo.id, style:{marginBottom:8}},
+          return h("div", {key:mo.id, id:"tq-"+mo.id, className:"ticket", "data-open":open?"1":undefined},
             h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
               title: open ? "Cerrar" : (mo.rank_why||""),
               style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",
-                border:"0.5px solid var(--color-border-tertiary)",
-                borderLeft:`3px solid ${moDone ? "#22c55e" : TRADE_ACCENT}`,
-                borderRadius: open ? "0 8px 0 0" : "0 8px 8px 0",
-                background: open ? "var(--color-background-tertiary)" : "var(--color-background-secondary)",
-                padding:"10px 12px", opacity: moDone && !open ? 0.65 : 1, cursor:"pointer"}},
+                border:0,borderBottom:"1px solid var(--hairline)",
+                background: open ? "var(--surface)" : "transparent",
+                padding:"11px 12px", opacity: moDone && !open ? 0.6 : 1, cursor:"pointer"}},
               h("div", {style:{fontSize:15,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",width:22,flexShrink:0}}, String(i+1)),
               h("div", {style:{flex:1,minWidth:0}},
-                h("div", {style:{fontSize:12,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || "Trade perdido sin marcar"),
-                h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
-                  `${mo.champion} · ${mo.date} · ${mo.time}` + (mo.ev_gap!=null ? ` · gap EV ${mo.ev_gap.toFixed(2)}` : ""))
+                h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3,minWidth:0}},
+                  h(DetIcon, {detector:"trade_v1", size:13, color:DET.trade_v1.acc}),
+                  h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,color:"var(--ink)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || "Trade perdido sin marcar")),
+                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time, evGap:mo.ev_gap})
               ),
-              moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid #22c55e55",background:"#22c55e14",color:"#22c55e",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
-              h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${TRADE_ACCENT}55`,background:`${TRADE_ACCENT}14`,color:TRADE_ACCENT,whiteSpace:"nowrap",flexShrink:0,fontFamily:"var(--font-mono)"}}, bucket),
+              moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid color-mix(in oklab,var(--signal-ok) 40%,transparent)",background:"color-mix(in oklab,var(--signal-ok) 12%,transparent)",color:"var(--signal-ok)",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
+              h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${tonedBorder(TRADE_ACCENT)}`,background:tint(TRADE_ACCENT,8),color:TRADE_ACCENT,whiteSpace:"nowrap",flexShrink:0,fontFamily:"var(--font-mono)"}}, bucket),
               h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})
             ),
-            open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+            open && h("div", {className:"row-body", style:{padding:"10px 12px 8px"}},
               h(DecisionCard, {key:"tq-card-"+mo.id, d:mo, exp:true, onToggle:()=>setExpId(null),
                 fb:fbs[mo.id], onFb, clipOpen:clipId===mo.id, onClip:(id)=>setClipId(c=>c===id?null:id), onSave}),
               h("div", {style:{display:"flex",gap:10,alignItems:"center",margin:"8px 2px 4px",flexWrap:"wrap"}},
@@ -917,9 +1470,9 @@ function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
 // de memoria (feedback 2026-07-22: el .md suelto no alcanzaba).
 // A CIEGAS a proposito: NO se muestra si exposure_v1 disparo ahi.
 const ANCHOR_BTNS = [
-  {key:"yes",    label:"Sí, fue exposición", color:"#22c55e"},
-  {key:"no",     label:"No, fue otra cosa",  color:"#ef4444"},
-  {key:"unsure", label:"Dudoso",             color:"#f59e0b"},
+  {key:"yes",    label:"Sí, fue exposición", color:"var(--signal-ok)"},
+  {key:"no",     label:"No, fue otra cosa",  color:"var(--signal-bad)"},
+  {key:"unsure", label:"Dudoso",             color:"var(--signal-warn)"},
 ];
 function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
   const [expId, setExpId] = useState(null);
@@ -932,12 +1485,12 @@ function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
     h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
       h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
         `${total} muertes que marcaste en desacuerdo · `,
-        h("span", {style:{color: done>0 ? "#22c55e" : "var(--color-text-secondary)",fontWeight:600}},
+        h("span", {style:{color: done>0 ? "var(--signal-ok)" : "var(--color-text-secondary)",fontWeight:600}},
           `${done}/${total} etiquetadas`)),
       h("button", {onClick:onRefresh, title:"Recarga desde la base de datos",
         style:{...sBadge(false),fontSize:11,padding:"4px 10px"}}, "Actualizar")
     ),
-    h("div", {style:{border:`0.5px solid ${EXPOSURE_ACCENT}35`,background:`${EXPOSURE_ACCENT}0d`,borderRadius:"var(--border-radius-md)",padding:"10px 12px",marginBottom:12,fontSize:12,lineHeight:1.6}},
+    h("div", {style:{border:`0.5px solid ${tonedBorder(EXPOSURE_ACCENT,30)}`,background:tint(EXPOSURE_ACCENT,6),borderRadius:"var(--border-radius-md)",padding:"10px 12px",marginBottom:12,fontSize:12,lineHeight:1.6}},
       h("b", null, "¿El error real fue estar EXPUESTO (posición/visión) antes de morir?"),
       " Abre la tarjeta, mira el clip y decide con lo que ves — no de memoria. Tu nota de entonces está arriba de cada caso.",
       h("div", {style:{marginTop:6,color:"var(--color-text-tertiary)",fontSize:11}},
@@ -948,19 +1501,19 @@ function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
           const open = expId===mo.id;
           const lab = mo.anchor_label;
           const cur = ANCHOR_BTNS.find(b=>b.key===lab);
-          return h("div", {key:mo.id, style:{marginBottom:8}},
-            h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",
-                borderLeft:`3px solid ${cur ? cur.color : "var(--color-border-secondary)"}`,
-                borderRadius:"0 8px 8px 0", background:"var(--color-background-secondary)",
-                padding:"10px 12px", opacity: lab && !open ? 0.75 : 1}},
+          return h("div", {key:mo.id, id:"as-"+mo.id, className:"ticket", "data-open":open?"1":undefined},
+            h("div", {style:{borderBottom:"1px solid var(--hairline)",
+                background: open ? "var(--surface)" : "transparent",
+                padding:"11px 12px", opacity: lab && !open ? 0.7 : 1}},
               h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
                 style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer"}},
                 h("div", {style:{fontSize:15,fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)",width:22,flexShrink:0}}, String(i+1)),
                 h("div", {style:{flex:1,minWidth:0}},
-                  h("div", {style:{fontSize:12,marginBottom:2}}, mo.moment || "Muerte"),
-                  h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
-                    `${mo.champion} · ${mo.date} · ${mo.time}`)),
-                cur && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${cur.color}55`,background:`${cur.color}14`,color:cur.color,whiteSpace:"nowrap",flexShrink:0}}, cur.label),
+                  h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3,minWidth:0}},
+                    h(DetIcon, {detector:"death_v1", size:13, color:DET.death_v1.acc}),
+                    h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,color:"var(--ink)"}}, mo.moment || "Muerte")),
+                  h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time})),
+                cur && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${tonedBorder(cur.color)}`,background:tint(cur.color,8),color:cur.color,whiteSpace:"nowrap",flexShrink:0}}, cur.label),
                 h(Ico,{name:open?"up":"down",size:12,color:"var(--color-text-tertiary)"})
               ),
               h("div", {style:{fontSize:12,color:"var(--color-text-secondary)",fontStyle:"italic",margin:"8px 0 6px",paddingLeft:32,lineHeight:1.5}},
@@ -970,12 +1523,12 @@ function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
                   h("button", {key:b.key, onClick:()=>onLabel(mo.id, lab===b.key ? null : b.key),
                     style:{fontSize:11,padding:"5px 12px",borderRadius:"var(--border-radius-md)",cursor:"pointer",
                       border:`0.5px solid ${lab===b.key ? b.color : "var(--color-border-tertiary)"}`,
-                      background: lab===b.key ? `${b.color}1f` : "transparent",
+                      background: lab===b.key ? tint(b.color,12) : "transparent",
                       color: lab===b.key ? b.color : "var(--color-text-tertiary)",
                       fontWeight: lab===b.key ? 600 : 400}}, b.label))
               )
             ),
-            open && h("div", {style:{border:"0.5px solid var(--color-border-tertiary)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"10px 10px 6px",background:"var(--color-background-primary)"}},
+            open && h("div", {className:"row-body", style:{padding:"10px 12px 8px"}},
               h(DecisionCard, {key:"as-card-"+mo.id, d:mo, exp:true, onToggle:()=>setExpId(null),
                 fb:fbs[mo.id], onFb:()=>{}, clipOpen:clipId===mo.id,
                 onClip:(id)=>setClipId(c=>c===id?null:id), onSave}),
@@ -994,8 +1547,8 @@ function AnchorSetView({data, fbs, onLabel, onSave, onJump, onRefresh}){
 // Exposicion sin muerte (#17 Fase 1, REPORT-ONLY): estados en los que estabas
 // profundo y a ciegas SIN que te castigaran con muerte. death_v1 solo ve los que
 // terminan en muerte, asi que la fraccion SOBREVIVIDA es la senal nueva. Sin
-// marcado: esta fase existe para que el usuario juzgue la tasa de falsos positivos.
-const EXPOSURE_ACCENT = "#f97316";
+// marcado: esta fase existe para juzgar la tasa de falsos positivos a mano.
+const EXPOSURE_ACCENT = "var(--pit-dragon)";
 const EXPOSURE_MIN_MIAS = 2;      // refleja exposure.MIN_ENEMIES_UNSEEN
 const EXPOSURE_MAX_SR = 0.35;     // refleja exposure.MAX_SAFETY_RATIO
 function ExposureCard({data, onJump}){
@@ -1004,17 +1557,17 @@ function ExposureCard({data, onJump}){
   const a = data.aggregate;
   if(!a.n) return null;
   const dist = (obj) => Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);
-  return h("div", {style:{border:`0.5px solid ${EXPOSURE_ACCENT}55`,background:`${EXPOSURE_ACCENT}0d`,borderRadius:"var(--border-radius-md)",padding:"14px 16px",marginBottom:16}},
+  return h("div", {style:{border:`0.5px solid ${tonedBorder(EXPOSURE_ACCENT)}`,background:tint(EXPOSURE_ACCENT,6),borderRadius:"var(--border-radius-md)",padding:"14px 16px",marginBottom:16}},
     h("div", {style:{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}},
       h("div", {style:{fontSize:13,fontWeight:600}}, "Exposición sin muerte"),
-      h("span", {style:{fontSize:10,padding:"2px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid #ef444455",background:"#ef44441f",color:"#ef4444"}}, "criterio NO validado")
+      h("span", {style:{fontSize:10,padding:"2px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid color-mix(in oklab,var(--signal-bad) 40%,transparent)",background:"color-mix(in oklab,var(--signal-bad) 14%,transparent)",color:"var(--signal-bad)"}}, "criterio NO validado")
     ),
     // Validado contra las 54 muertes que el jugador etiqueto (2026-07-22):
     // recall 3%, AUC 0.477, p=0.725. El criterio mide profundidad en mapa; su
     // "exposicion" pasa en su propia mitad (mediana safety_ratio 0.79). La
     // tarjeta se queda como registro, pero NO puede presentar sus numeros como
     // si midieran exposicion en su sentido.
-    h("div", {style:{border:"0.5px solid #ef444455",background:"#ef44440d",borderRadius:"var(--border-radius-md)",padding:"8px 10px",marginBottom:10,fontSize:11,lineHeight:1.6}},
+    h("div", {style:{border:"0.5px solid color-mix(in oklab,var(--signal-bad) 40%,transparent)",background:"color-mix(in oklab,var(--signal-bad) 7%,transparent)",borderRadius:"var(--border-radius-md)",padding:"8px 10px",marginBottom:10,fontSize:11,lineHeight:1.6}},
       h("b", null, "Este criterio no detecta lo que tú llamas exposición."),
       " Medido contra tus 54 muertes etiquetadas: recall 3%, AUC 0.477, p=0.725 (azar). ",
       "En tus muertes de exposición estabas en tu PROPIA mitad (mediana de profundidad 0.79); ",
@@ -1047,7 +1600,7 @@ function ExposureCard({data, onJump}){
             h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)",color:"var(--color-text-tertiary)"}}, `${m.phase}/${m.gold_band}`),
             h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)"}}, m.safety_ratio!=null ? m.safety_ratio.toFixed(2) : "—"),
             h("td", {style:{padding:"4px 6px",fontFamily:"var(--font-mono)"}}, String(m.enemies_unseen)),
-            h("td", {style:{padding:"4px 6px",color: m.died ? "var(--color-text-danger)" : "#22c55e"}},
+            h("td", {style:{padding:"4px 6px",color: m.died ? "var(--color-text-danger)" : "var(--signal-ok)"}},
               m.died ? "murió" : "sobrevivió"),
             h("td", {style:{padding:"4px 6px",color:"var(--color-text-tertiary)"}}, m.has_clip ? "sí" : "—"),
             h("td", {style:{padding:"4px 6px"}},
@@ -1078,7 +1631,7 @@ function ProgressCard({prog}){
   const pct = v => v==null ? "—" : (v*100).toFixed(1)+"%";
   let verdict = null;
   if(b && b.prev.prop!=null && b.last.prop!=null){
-    if(b.last.ci_high < b.prev.ci_low) verdict = {txt:"mejora clara (IC separados)", color:"#22c55e"};
+    if(b.last.ci_high < b.prev.ci_low) verdict = {txt:"mejora clara (IC separados)", color:"var(--signal-ok)"};
     else if(b.last.ci_low > b.prev.ci_high) verdict = {txt:"empeoramiento (IC separados)", color:"var(--color-text-danger)"};
     else verdict = {txt:"IC solapados: sin cambio distinguible todavía", color:"var(--color-text-tertiary)"};
   }
@@ -1094,10 +1647,10 @@ function ProgressCard({prog}){
         h("br"), `densidad ${l.deaths_per_game} muertes/partida (a la baja = posible sobre-corrección)`)
     ),
     h("svg", {viewBox:`0 0 ${W} ${H}`, style:{width:"100%",height:120,marginTop:10,display:"block"}},
-      h("polygon", {points:band, fill:"rgba(239,68,68,0.12)"}),
+      h("polygon", {points:band, fill:"color-mix(in oklab,var(--signal-bad) 14%,transparent)"}),
       h("line", {x1:PAD, x2:W-PAD, y1:y(prog.goal_prop), y2:y(prog.goal_prop),
-                 stroke:"#22c55e", strokeWidth:1, strokeDasharray:"4 3"}),
-      h("polyline", {points:line, fill:"none", stroke:"#ef4444", strokeWidth:1.5})
+                 stroke:"var(--signal-ok)", strokeWidth:1, strokeDasharray:"4 3"}),
+      h("polyline", {points:line, fill:"none", stroke:"var(--signal-bad)", strokeWidth:1.5})
     ),
     h("div", {style:{display:"flex",justifyContent:"space-between",fontSize:10,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}},
       h("span", null, s[0].date),
@@ -1110,26 +1663,69 @@ function ProgressCard({prog}){
   );
 }
 
+const DASH_VIEW_STATE = "lolcoach.dashboard.view.v1";
+// Vistas validas para el deep-link ?tab=; cualquier otro valor se ignora.
+const TAB_KEYS = ["session","trades","anchors","decisions","patterns","calibrate","review"];
+function readViewState(){
+  try { const raw=sessionStorage.getItem(DASH_VIEW_STATE); const v=raw&&JSON.parse(raw); return v&&typeof v==="object" ? v : {}; }
+  catch(_) { return {}; }
+}
 function App(){
+  const restoredView = useRef(readViewState()).current;
+  const requestedMatch = useRef(new URLSearchParams(location.search).get("match")).current;
+  // ?tab= completa la familia de deep-links que ya existe (?dec=, ?match=): deja
+  // enlazar una vista concreta sin depender del estado guardado en sessionStorage.
+  const requestedTab = useRef((()=>{ const t=new URLSearchParams(location.search).get("tab");
+    return TAB_KEYS.includes(t) ? t : null; })()).current;
   const [stats, setStats] = useState(null);
   const [decisions, setDecisions] = useState([]);
   const [patterns, setPatterns] = useState([]);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const [tab, setTab] = useState("decisions");
-  const [acc, setAcc] = useState("both");
-  const [fdet, setFdet] = useState("all");
-  const [fbFilter, setFbFilter] = useState("all");   // all | disagree | agree | none
-  const [sort, setSort] = useState("recent");
-  const [limit, setLimit] = useState(50);
+  const [tab, setTab] = useState(requestedTab || (requestedMatch ? "decisions" : (restoredView.tab||"decisions")));
+  const [acc, setAcc] = useState(restoredView.acc||"both");
+  const [fdet, setFdet] = useState(restoredView.fdet||"all");
+  const [fbFilter, setFbFilter] = useState(restoredView.fbFilter||"all");   // all | disagree | agree | none
+  const [sort, setSort] = useState(restoredView.sort||"recent");
+  // Entrada por partidas: se reconoce una partida antes de ver decisiones
+  // sueltas. "Todas las decisiones" queda como vista secundaria con sus
+  // filtros intactos, que es donde vive la busqueda transversal.
+  const [decView, setDecView] = useState(restoredView.decView==="all" ? "all" : "matches");
+  const [matchLimit, setMatchLimit] = useState(20);
+  const [limit, setLimit] = useState(Number.isFinite(restoredView.limit)?restoredView.limit:50);
+  const skipInitialLimitReset = useRef(true);
+  // Ancla de scroll del acordeon. Se apunta la fila pulsada y su posicion en
+  // pantalla ANTES de cambiar el estado; el useLayoutEffect de abajo compensa
+  // tras el commit. Se usa useLayoutEffect y no requestAnimationFrame porque
+  // con React 18 el re-render puede caer despues de dos frames: medido, la fila
+  // seguia saltando 1412 px con rAF doble.
+  const scrollAnchor = useRef(null);
+  const anchorExp = (domId, mutate) => {
+    const el = document.getElementById(domId);
+    scrollAnchor.current = el ? {domId, top: el.getBoundingClientRect().top} : null;
+    mutate();
+  };
+  React.useLayoutEffect(() => {
+    const a = scrollAnchor.current;
+    if(!a) return;
+    scrollAnchor.current = null;
+    const el = document.getElementById(a.domId);
+    if(!el) return;
+    const delta = el.getBoundingClientRect().top - a.top;
+    if(Math.abs(delta) > 1) window.scrollBy(0, delta);
+  });
   const [exp, setExp] = useState(null);
   const [clipOpen, setClipOpen] = useState(null);
   const [fbs, setFbs] = useState({});
+  const fbsRef = useRef({});
+  const fbQueues = useRef({});
   const [matches, setMatches] = useState([]);
-  const [selMatch, setSelMatch] = useState(null);   // null = todas las partidas
+  const [selMatch, setSelMatch] = useState(requestedMatch || restoredView.selMatch||null);   // null = todas las partidas
   const [mapData, setMapData] = useState(null);
   const [vizMode, setVizMode] = useState("map");
+
+  useEffect(() => { fbsRef.current = fbs; }, [fbs]);
   const [replay, setReplay] = useState(null);       // {available, in_match_start_s} del replay completo
   const replayRef = useRef(null);
   // Momento (game_time_ms) al que buscar el replay tras un salto: el video de la
@@ -1184,7 +1780,7 @@ function App(){
   const loadTrade = () => fetch("/api/trade_queue").then(r=>r.json()).then(setTradeData).catch(()=>{});
   const refreshTrade = () => { setTradeDone({}); loadTrade(); };  // el server ya excluye las marcadas
   const [jumpId, setJumpId] = useState(null);       // decisión destino de un salto (scroll + resaltado)
-  const jumpRef = useRef(false);                    // suprime el reset de selMatch del cambio de cohort en un salto
+  const jumpRef = useRef(Boolean(restoredView.selMatch)); // conserva la partida restaurada durante el primer efecto de cohort
   const loadQueue = () => fetch("/api/review_queue").then(r=>r.json()).then(setQueue).catch(()=>{});
 
   // Salto directo a una decisión: selecciona cohort/partida, expande la card y
@@ -1206,6 +1802,11 @@ function App(){
       fetch("/api/matches").then(r=>r.json()),
     ]).then(([s,d,m]) => {
       setStats(s); setDecisions(d); setMatches(m);
+      const initialMatch = requestedMatch || restoredView.selMatch;
+      if(initialMatch && m.some(x=>x.match_id===initialMatch)) {
+        setSelMatch(initialMatch);
+        if(requestedMatch) setTab("decisions");
+      } else if(initialMatch) setSelMatch(null);
       const init = {}; d.forEach(x => { if(x.feedback) init[x.id]=x.feedback; });
       setFbs(init); setLoading(false);
       const qdec = parseInt(new URLSearchParams(location.search).get("dec"), 10);
@@ -1216,6 +1817,22 @@ function App(){
     loadTrade();
     loadAnchors();
     fetch("/api/ingest_status").then(r=>r.json()).then(setIngest).catch(()=>{});
+  }, []);
+
+  // Solo preferencias de vista efímeras: nunca cuenta, Riot ID ni texto privado.
+  useEffect(() => {
+    try { sessionStorage.setItem(DASH_VIEW_STATE, JSON.stringify({tab,acc,fdet,fbFilter,sort,limit,selMatch,decView})); }
+    catch(_) {}
+  }, [tab,acc,fdet,fbFilter,sort,limit,selMatch]);
+  useEffect(() => {
+    if(loading || restoredView.scrollY==null) return;
+    const restore=()=>window.scrollTo(0, Math.max(0, restoredView.scrollY));
+    requestAnimationFrame(restore); const t=setTimeout(restore, 180);
+    return ()=>clearTimeout(t);
+  }, [loading]);
+  useEffect(() => {
+    const remember=()=>{ try { const current=readViewState(); sessionStorage.setItem(DASH_VIEW_STATE, JSON.stringify({...current,scrollY:window.scrollY})); } catch(_) {} };
+    window.addEventListener("pagehide",remember); return ()=>window.removeEventListener("pagehide",remember);
   }, []);
 
   useEffect(() => {
@@ -1243,7 +1860,14 @@ function App(){
     }
   }, [jumpId, selMatch, decisions, limit, tab]);
 
-  useEffect(() => { setLimit(50); }, [acc, fdet, sort, selMatch]);
+  useEffect(() => {
+    if(skipInitialLimitReset.current){ skipInitialLimitReset.current=false; return; }
+    setLimit(50);
+  }, [acc, fdet, sort, selMatch]);
+
+  // Cambiar de cuenta cambia el conjunto de partidas: el "mostrar 20 mas"
+  // acumulado no tiene sentido sobre una lista distinta.
+  useEffect(() => { setMatchLimit(20); }, [acc]);
 
   useEffect(() => {
     setFocusViz(null);
@@ -1281,13 +1905,31 @@ function App(){
   const openDec = (id) => { setExp(id); setClipOpen(null); setLimit(l=>Math.max(l,500)); };
 
   const setFb = (id,v) => {
-    const next = fbs[id]===v ? null : v;
-    setFbs(p => ({...p,[id]:next}));
-    fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,feedback:next})}).catch(()=>{});
+    // Una decisión puede aparecer a la vez en mapa y lista. Serializar por id
+    // evita que una respuesta vieja revierta un veredicto posterior correcto.
+    const previous = fbQueues.current[id] || Promise.resolve(true);
+    const queued = previous.catch(()=>false).then(async()=>{
+      const prior = fbsRef.current[id];
+      const next = prior===v ? null : v;
+      const optimistic = {...fbsRef.current,[id]:next};
+      fbsRef.current = optimistic; setFbs(optimistic);
+      try {
+        const r = await fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,feedback:next})});
+        if(!r.ok) throw new Error("feedback");
+        return true;
+      } catch(_) {
+        const rollback = {...fbsRef.current,[id]:prior};
+        fbsRef.current = rollback; setFbs(rollback);
+        return false;
+      }
+    });
+    fbQueues.current[id] = queued;
+    return queued;
   };
   const saveContext = (id, payload) => {
-    fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({id, ...payload})}).catch(()=>{});
+    return fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id, ...payload})}).then(r=>{
+        if(!r.ok) throw new Error("context");
     // Refleja el guardado en memoria: la card se desmonta al colapsar y al
     // reabrir se reinicializa desde estos objetos — sin este patch la nota
     // "desaparecia" de la UI aunque SI estaba en la DB (feedback 2026-07-18).
@@ -1298,15 +1940,17 @@ function App(){
     setDecisions(ds => ds.map(x => x.id===id ? {...x, ...patch} : x));
     setTradeData(td => (td && td.moments)
       ? {...td, moments: td.moments.map(x => x.id===id ? {...x, ...patch} : x)} : td);
+    return true;
+    }).catch(()=>false);
   };
   // Handlers de la Sesion de hoy: igual que los normales pero dejan el momento
   // como "completada" (la confirmacion no se pierde hasta pedir tanda nueva).
-  const sessionFb = (id, v) => { setSessionDone(s=>({...s,[id]:true})); setFb(id, v); };
-  const sessionSave = (id, payload) => { setSessionDone(s=>({...s,[id]:true})); saveContext(id, payload); };
+  const sessionFb = async (id, v) => { const ok=await setFb(id, v); if(ok) setSessionDone(s=>({...s,[id]:true})); return ok; };
+  const sessionSave = async (id, payload) => { const ok=await saveContext(id, payload); if(ok) setSessionDone(s=>({...s,[id]:true})); return ok; };
   const newSession = () => { setSessionDone({}); loadSession(); };
   // Handlers de la Cola de trades (#5): marcar deja el trade en verde en la tanda.
-  const tradeFb = (id, v) => { setTradeDone(s=>({...s,[id]:true})); setFb(id, v); };
-  const tradeSave = (id, payload) => { setTradeDone(s=>({...s,[id]:true})); saveContext(id, payload); };
+  const tradeFb = async (id, v) => { const ok=await setFb(id, v); if(ok) setTradeDone(s=>({...s,[id]:true})); return ok; };
+  const tradeSave = async (id, payload) => { const ok=await saveContext(id, payload); if(ok) setTradeDone(s=>({...s,[id]:true})); return ok; };
   const toggleClip = (id) => setClipOpen(c => c===id ? null : id);
 
   // "both" = MIS cuentas: los cohorts de referencia (challenger) solo se ven al elegir su chip.
@@ -1338,53 +1982,109 @@ function App(){
   if(loading) return h("div",{style:{padding:"60px 0",textAlign:"center",color:"var(--color-text-tertiary)"}},"Cargando…");
   if(err) return h("div",{style:{padding:"40px 0",color:"var(--color-text-danger)"}}, "Error: "+err);
 
-  return h("div", null,
+  // Navegacion: una seccion por vista, con su contador propio. El contador vive
+  // aqui (y no en el titulo de la vista) porque es lo que decide a donde ir.
+  const NAV = [
+    {key:"session",   label:"Sesión de hoy", count: sessionData && sessionData.moments ? sessionData.moments.length : null},
+    {key:"trades",    label:"Cola de trades", count: tradeData && tradeData.total || null},
+    {key:"anchors",   label:"Validar exposición", count: anchorData && anchorData.total ? `${anchorData.n_marked}/${anchorData.total}` : null},
+    {key:"decisions", label:"Decisiones",   count: stats ? stats.decisions : null},
+    {key:"patterns",  label:"Patrones",     count: patterns.length || null},
+    {key:"calibrate", label:"Calibrar",     count: null},
+    {key:"review",    label:"Revisión",     count: queue && queue.n_disagree || null},
+  ];
+  const VIEW_TITLE = Object.fromEntries(NAV.map(n => [n.key, n.label]));
+
+  return h("div", {className:"shell"},
+    h("nav", {className:"nav", "aria-label":"Secciones"},
+      h("div", null,
+        h("div", {className:"nav-brand"},
+          h("span", {className:"brand-slot", dangerouslySetInnerHTML:{__html:BRAND_MARK}}),
+          h("span", null, "RiftPattern")),
+        h("div", {className:"mono", style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",marginTop:3}},
+          `${stats.patch ? "parche "+stats.patch : ""}`)
+      ),
+      h("div", {className:"nav-list"},
+        ...NAV.map(n => h("button", {key:n.key, onClick:()=>setTab(n.key),
+          className:"nav-item", "aria-current": tab===n.key ? "page" : undefined},
+          h("span", {className:"nav-mark"}),
+          h("span", {style:{minWidth:0,overflow:"hidden",textOverflow:"ellipsis"}}, n.label),
+          n.count!=null && h("span", {className:"nav-count"}, String(n.count))))
+      ),
+      h("div", {style:{marginTop:"auto"}},
+        h("div", {className:"lbl", style:{marginBottom:6}}, "Cuenta"),
+        h("div", {style:{display:"flex",flexDirection:"column",gap:2}},
+          ...[{key:"both",label:"Mis cuentas"}, ...Object.keys(stats.by_cohort||{}).filter(k=>k).sort().map(k=>({key:k,label:COHORT_LABELS[k]||k}))]
+            .map(a => h("button", {key:a.key, onClick:()=>setAcc(a.key),
+              className:"seg", "aria-pressed": acc===a.key,
+              style:{justifyContent:"flex-start",width:"100%"}}, a.label))
+        )
+      )
+    ),
+    h("main", {className:"main"},
     // Banner de pipeline muerto (#11): la key expirada de 2026-06 paso 7 dias en
     // silencio porque key_alive solo vivia en ingest_status.json.
-    ingest && ingest.key_alive===false && h("div", {style:{background:"rgba(239,68,68,0.10)",border:"0.5px solid rgba(239,68,68,0.45)",color:"var(--color-text-danger)",borderRadius:"var(--border-radius-md)",padding:"10px 14px",marginBottom:16,fontSize:13,lineHeight:1.5}},
+    ingest && ingest.key_alive===false && h("div", {className:"note note-bad", style:{marginBottom:"var(--s5)",color:"var(--signal-bad)"}},
       h("b", null, "API key de Riot muerta"),
       ` — ingesta parada${ingest.days_since_ingest!=null ? ` hace ${ingest.days_since_ingest} día${ingest.days_since_ingest===1?"":"s"}` : ""}` +
       `${ingest.last_ingested_utc ? ` (última partida ingestada: ${String(ingest.last_ingested_utc).slice(0,10)})` : ""}. ` +
       "Renueva la key en developer.riotgames.com y pégala en config.toml; auto_ingest se pone al día solo."
     ),
-    h("div", {style:{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:16,marginBottom:20,borderBottom:"0.5px solid var(--color-border-tertiary)",flexWrap:"wrap",gap:10}},
-      h("div", null,
-        h("div", {style:{fontSize:16,fontWeight:500}}, "lol-coach"),
-        h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)",marginTop:2}}, `${stats.patch ? "parche "+stats.patch+" · " : ""}${stats.matches} partidas · ${stats.decisions} decisiones`)
-      ),
-      h("div", {style:{display:"flex",gap:4,flexWrap:"wrap"}},
-        ...[{key:"both",label:"Mis cuentas"}, ...Object.keys(stats.by_cohort||{}).filter(k=>k).sort().map(k=>({key:k,label:COHORT_LABELS[k]||k}))]
-          .map(a => h("button", {key:a.key, onClick:()=>setAcc(a.key), style:sBadge(acc===a.key)}, a.label))
-      )
-    ),
-    h("div", {style:{display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:8,marginBottom:24}},
+    h("div", {className:"stats"},
       ...statCards.map(s => h(StatCard, {key:s.label, ...s}))
     ),
-    h("div", {style:{display:"flex",gap:4,marginBottom:16}},
-      ...[{key:"session",label:"Sesión de hoy"},
-          {key:"trades",label: tradeData&&tradeData.total ? `Cola de trades (${tradeData.total})` : "Cola de trades"},
-          {key:"anchors",label: anchorData&&anchorData.total ? `Validar exposición (${anchorData.n_marked}/${anchorData.total})` : "Validar exposición"},
-          {key:"decisions",label:"Decisiones"},{key:"patterns",label:"Patrones"},{key:"calibrate",label:"Calibrar"},
-          {key:"review",label: queue&&queue.n_disagree ? `Revisión (${queue.n_disagree})` : "Revisión"}]
-        .map(t => h("button", {key:t.key, onClick:()=>setTab(t.key), style:{...sBadge(tab===t.key),padding:"7px 14px",fontSize:13}}, t.label))
+    h("div", {style:{display:"flex",alignItems:"center",gap:"var(--s4)",flexWrap:"wrap",marginBottom:"var(--s5)"}},
+      h("h1", {className:"h-view"}, VIEW_TITLE[tab] || ""),
+      tab==="decisions" && h("div", {style:{display:"flex",gap:2,marginLeft:"auto"}},
+        ...[{k:"matches",l:"Partidas recientes"},{k:"all",l:"Todas las decisiones"}].map(v =>
+          h("button", {key:v.k, className:"seg", "aria-pressed":decView===v.k,
+            onClick:()=>{ setDecView(v.k); if(v.k==="matches") setSelMatch(null); }}, v.l)))
     ),
-    tab==="decisions" && h("div", {style:{display:"flex",gap:16,alignItems:"flex-start"}},
-      // Vista 1: sidebar de partidas
-      h("div", {style:{width:210,flexShrink:0,maxHeight:"75vh",overflowY:"auto",position:"sticky",top:8}},
-        h("div", {style:{fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)",marginBottom:8}}, "Partidas"),
-        h("button", {onClick:()=>setSelMatch(null),
-          style:{...sBadge(selMatch===null),display:"block",width:"100%",textAlign:"left",padding:"8px 10px",marginBottom:6,fontSize:12,border:"0.5px solid var(--color-border-tertiary)"}},
-          `Todas (${shownMatches.reduce((a,m)=>a+m.decisions_count,0)} decisiones)`),
-        ...shownMatches.map(m => h(MatchItem, {key:m.match_id, m, active:selMatch===m.match_id, disagree:disagreeByMatch[m.match_id]||0, reviewed:reviewedByMatch[m.match_id]||0, onClick:()=>setSelMatch(m.match_id)}))
+    // ENTRADA POR PARTIDAS: sin partida elegida la vista es el listado ancho.
+    // El recorrido es reconocer -> resumen -> decisiones, no una base de
+    // decisiones crudas donde no se sabe por donde empezar.
+    tab==="decisions" && decView==="matches" && !selMatch && h("div", {className:"panel"},
+      h("div", {className:"panel-head"},
+        h("span", {className:"lbl"}, "Partidas recientes"),
+        h("span", {className:"mono", style:{marginLeft:"auto",fontSize:"var(--t-micro)",color:"var(--ink-faint)"}},
+          `${shownMatches.length} partidas · ${shownMatches.reduce((a,m)=>a+m.decisions_count,0)} decisiones`)),
+      h("div", {className:"panel-body"},
+        shownMatches.length===0
+          ? h("div", {style:{padding:"36px 0",textAlign:"center",color:"var(--ink-faint)",fontSize:"var(--t-sm)"}},
+              "No hay partidas para esta cuenta.")
+          : shownMatches.slice(0, matchLimit).map(m => h(MatchItem, {key:m.match_id, m, wide:true,
+              active:false, disagree:disagreeByMatch[m.match_id]||0,
+              reviewed:reviewedByMatch[m.match_id]||0, onClick:()=>setSelMatch(m.match_id)})),
+        shownMatches.length>matchLimit && h("button", {onClick:()=>setMatchLimit(l=>l+20),
+          className:"seg", style:{width:"100%",justifyContent:"center",marginTop:"var(--s2)"}},
+          `Mostrar 20 más (${shownMatches.length-matchLimit} restantes)`)
+      )
+    ),
+    tab==="decisions" && decView==="matches" && selMatch && h(MatchSummary, {
+      m:selMatchObj, reviewed:reviewedByMatch[selMatch]||0, onBack:()=>setSelMatch(null)}),
+    tab==="decisions" && h("div", {className:"decision-layout"},
+      // Vista 1: sidebar de partidas -- solo en "Todas las decisiones", donde
+      // sirve de filtro. En la entrada por partidas ya hay listado y resumen.
+      decView==="all" && h("div", {className:"explore panel"},
+        h("div", {className:"panel-head"},
+          h("span", {className:"lbl"}, "Partidas"),
+          h("span", {className:"mono", style:{marginLeft:"auto",fontSize:"var(--t-micro)",color:"var(--ink-faint)"}},
+            String(shownMatches.length))),
+        h("div", {className:"panel-body"},
+          h("button", {onClick:()=>setSelMatch(null), "aria-pressed":selMatch===null,
+            className:"seg", style:{width:"100%",justifyContent:"flex-start",marginBottom:2}},
+            `Todas · ${shownMatches.reduce((a,m)=>a+m.decisions_count,0)} decisiones`),
+          ...shownMatches.map(m => h(MatchItem, {key:m.match_id, m, active:selMatch===m.match_id, disagree:disagreeByMatch[m.match_id]||0, reviewed:reviewedByMatch[m.match_id]||0, onClick:()=>setSelMatch(m.match_id)}))
+        )
       ),
       // Vista 2: decisiones del match (o de todos), ordenadas por game_time_ms
-      h("div", {style:{flex:1,minWidth:0}},
+      h("div", {className:"decision-detail"},
         h("div", {style:{display:"flex",gap:5,marginBottom:8,flexWrap:"wrap",alignItems:"center"}},
           h("button", {onClick:()=>setFdet("all"), style:{...sBadge(fdet==="all"),fontSize:11,padding:"4px 10px"}}, "Todos"),
           ...Object.entries(DET).map(([k,dd]) => h("button", {key:k, onClick:()=>setFdet(k),
             style:{fontSize:11,padding:"4px 10px",borderRadius:"var(--border-radius-md)",
-              border: fdet===k ? `0.5px solid ${dd.acc}55` : "0.5px solid transparent",
-              background: fdet===k ? `${dd.acc}14` : "transparent",
+              border: fdet===k ? `0.5px solid ${tonedBorder(dd.acc)}` : "0.5px solid transparent",
+              background: fdet===k ? tint(dd.acc,8) : "transparent",
               color: fdet===k ? dd.acc : "var(--color-text-tertiary)"}}, dd.label)),
           h("div", {style:{marginLeft:"auto",display:"flex",gap:4}},
             ...[{key:"recent",label:"Cronológico"},{key:"gap",label:"Mayor gap EV"}]
@@ -1393,7 +2093,7 @@ function App(){
         ),
         ((fbCounts.agree + fbCounts.disagree + fbCounts.equivalent) > 0 || fbFilter !== "all") && h("div",
           {style:{display:"flex",gap:5,marginBottom:10,alignItems:"center",flexWrap:"wrap"}},
-          h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",textTransform:"uppercase",letterSpacing:"0.04em",marginRight:2}}, "Veredicto"),
+          h("span", {className:"lbl", style:{marginRight:2}}, "Veredicto"),
           ...[
             {k:"all",        l:`Todas (${fbBase.length})`,               c:"var(--color-text-secondary)", bg:"var(--color-background-tertiary)"},
             {k:"disagree",   l:`✕ se equivoca (${fbCounts.disagree})`,   c:"var(--color-text-danger)",    bg:"var(--color-background-danger)"},
@@ -1434,14 +2134,17 @@ function App(){
                   clipOpen:clipOpen===vizOpen, onClip:toggleClip, onSave:saveContext})
               )
         ),
-        selMatch && h(SimilarMatches, {match:selMatch, onSelect:setSelMatch}),
-        selMatch && h("div", {style:{borderTop:"0.5px solid var(--color-border-secondary)",marginTop:20,paddingTop:14,marginBottom:10,fontSize:10,textTransform:"uppercase",letterSpacing:"0.06em",color:"var(--color-text-tertiary)"}}, `Decisiones de la partida · ${shown.length}`),
+        selMatch && h(SimilarMatches, {match:selMatch}),
         shown.length===0
-          ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "Sin decisiones para este filtro")
-          : h("div", null,
+          ? h("div", {className:"panel", style:{textAlign:"center",color:"var(--ink-faint)",padding:"40px 0",fontSize:"var(--t-sm)"}}, "Sin decisiones para este filtro")
+          : h("div", {className:"panel", style:{marginTop:selMatch?"var(--s5)":0}},
+              h("div", {className:"panel-head"},
+                h("span", {className:"lbl"}, selMatch ? "Decisiones de la partida" : "Decisiones"),
+                h("span", {className:"mono", style:{marginLeft:"auto",fontSize:"var(--t-micro)",color:"var(--ink-faint)"}},
+                  String(shown.length))),
               ...visible.map(d => h(DecisionCard, {key:d.id, d, exp:exp===d.id,
                 domId:"dec-"+d.id, highlight:jumpId===d.id,
-                onToggle:()=>setExp(exp===d.id?null:d.id), fb:fbs[d.id], onFb:setFb,
+                onToggle:()=>anchorExp("dec-"+d.id, ()=>setExp(exp===d.id?null:d.id)), fb:fbs[d.id], onFb:setFb,
                 clipOpen:clipOpen===d.id, onClip:toggleClip, onSave:saveContext})),
               shown.length>limit && h("button", {onClick:()=>setLimit(l=>l+50),
                 style:{...sBadge(false),width:"100%",padding:"10px",marginTop:6,fontSize:12,border:"0.5px solid var(--color-border-tertiary)"}},
@@ -1465,6 +2168,7 @@ function App(){
     tab==="calibrate" && h(Calibrate),
     tab==="review" && h(ReviewQueue, {queue, onJump:jumpTo, onRefresh:loadQueue,
       decisions, fbs, onFb:setFb, onSave:saveContext})
+    )
   );
 }
 

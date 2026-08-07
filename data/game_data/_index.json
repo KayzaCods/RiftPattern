@@ -1,0 +1,25 @@
+{
+  "patch_version": "26.14",
+  "ddragon_version": "16.14.1",
+  "version": "16.14.1",
+  "generated_at": "2026-07-22T18:46:39Z",
+  "files": {
+    "_index.json": 783,
+    "champion_stats_meraki.json": 680352,
+    "champions_full.json": 1214604,
+    "champions_summary.json": 203453,
+    "items.json": 783342,
+    "items_cdragon.json": 573991,
+    "patch_notes_2610.json": 5396,
+    "runes.json": 44218,
+    "summoner_spells.json": 22128,
+    "version.txt": 7
+  },
+  "sources": {
+    "data_dragon": "https://ddragon.leagueoflegends.com/cdn/16.14.1/data/en_US/",
+    "community_dragon": "https://raw.communitydragon.org/latest/",
+    "meraki": "https://cdn.merakianalytics.com/riot/lol/resources/latest/en-US/"
+  },
+  "champion_count": 173,
+  "item_count": 706
+}

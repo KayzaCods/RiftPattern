@@ -24,9 +24,10 @@ import sys
 import threading
 import webbrowser
 from datetime import datetime, timezone
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -114,6 +115,10 @@ def query_ingest_status(conn, status_path: Path | None = None) -> dict:
 
 HERE = Path(__file__).resolve().parent
 HTML_PATH = HERE / "dashboard.html"
+# Activos versionados de Data Dragon (descargados por download_champion_icons.py).
+# Raiz de contencion de /assets/: nada fuera de aqui se sirve.
+ASSETS_ROOT = (HERE / "assets").resolve()
+DDRAGON_VERSION = "16.14.1"
 
 # Every decision encodes exactly one option as the one the player actually took.
 # Quien la localiza es `features.taken_index` (campo `taken` explicito, con
@@ -582,18 +587,59 @@ def trade_moment_ms(conn, decision_id):
     return moment
 
 
+@lru_cache(maxsize=1)
+def _champion_icon_index() -> dict:
+    """Nombre visible de campeon -> ruta local de su retrato.
+
+    El nombre que guarda Riot no sirve como filename: 'Bel'Veth' es 'Belveth' y
+    'Wukong' es 'MonkeyKing'. El manifiesto del descargador guarda ambos, asi que
+    el mapeo se lee de ahi en vez de derivarlo. Si no hay manifiesto, se devuelve
+    vacio y la UI cae al glifo local sin romper la fila.
+    """
+    manifest = ASSETS_ROOT / "ddragon" / DDRAGON_VERSION / "manifest.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    index = {}
+    for entry in data.get("champions") or []:
+        name, rel = entry.get("champion_name") or entry.get("name"), entry.get("file")
+        if name and rel:
+            index[name] = f"/assets/ddragon/{DDRAGON_VERSION}/{rel}"
+    return index
+
+
+def champion_icon_url(champion):
+    return _champion_icon_index().get(champion)
+
+
 # A) Decisions grouped by match. obtener_partidas(): matches + decision counts.
-SQL_MATCHES = """
+# Los conteos por detector comparten el JOIN, asi que heredan la exclusion de
+# `positive_trade`: si se contaran aparte, su suma no cuadraria con
+# decisions_count y el desajuste se veria en la fila al primer vistazo.
+DETECTOR_COUNT_KEYS = {
+    "death_v1": "death_count",
+    "objective_readiness_v1": "objective_count",
+    "trade_v1": "trade_count",
+    "tempo_v1": "tempo_count",
+}
+_SQL_DETECTOR_COUNTS = "\n".join(
+    f"       SUM(CASE WHEN d.detector_id = '{det}' THEN 1 ELSE 0 END) AS {col},"
+    for det, col in DETECTOR_COUNT_KEYS.items()
+)
+SQL_MATCHES = f"""
 SELECT m.match_id, m.game_start_ms, m.game_duration_s, m.our_cohort,
-       p.champion_name AS champion, p.win,
+       p.champion_name AS champion, p.win, p.kills, p.deaths, p.assists,
+       p.team_position AS role,
        COUNT(d.id) AS decisions_count,
+{_SQL_DETECTOR_COUNTS}
        SUM(CASE WHEN d.user_feedback IS NOT NULL OR d.user_best_option IS NOT NULL
                 OR d.user_feedback_note IS NOT NULL THEN 1 ELSE 0 END) AS reviewed_count
 FROM matches m
 LEFT JOIN decisions d ON d.match_id = m.match_id
      AND d.context_json NOT LIKE '%"positive_trade": true%'
 LEFT JOIN participants p ON p.match_id = m.match_id AND p.puuid = m.our_puuid
-{where}
+{{where}}
 GROUP BY m.match_id
 ORDER BY m.game_start_ms DESC
 """
@@ -607,11 +653,24 @@ def query_matches(conn, cohort=None) -> list:
         {
             "match_id": r["match_id"],
             "date": fmt_date(r["game_start_ms"]),
+            # Crudo ademas de formateado: la antiguedad se calcula en el
+            # frontend y una fecha ya formateada no sirve para restar.
+            "game_start_ms": r["game_start_ms"],
             "duration_s": r["game_duration_s"],
             "cohort": r["our_cohort"] or "—",
             "champion": r["champion"] or "—",
+            "champion_icon": champion_icon_url(r["champion"]),
+            # Sale del participante propio, no de las decisiones: una partida
+            # puede no tener ninguna y aun asi tiene rol.
+            "role": r["role"] or "—",
             "win": bool(r["win"]) if r["win"] is not None else None,
+            "kills": r["kills"],
+            "deaths": r["deaths"],
+            "assists": r["assists"],
             "decisions_count": r["decisions_count"],
+            "detector_counts": {
+                det: (r[col] or 0) for det, col in DETECTOR_COUNT_KEYS.items()
+            },
             "reviewed_count": r["reviewed_count"] or 0,
         }
         for r in rows
@@ -847,6 +906,9 @@ def query_match_similarity(conn, match, top_n=4) -> dict:
         shared.sort(key=lambda s: -abs(s["you"] - 0))
         neighbors.append({
             "match_id": m, "champion": meta[m]["champion"], "date": meta[m]["date"],
+            # El retrato es el ancla de reconocimiento: sin el, una partida
+            # similar solo se distingue por victoria/derrota y una fecha.
+            "champion_icon": champion_icon_url(meta[m]["champion"]),
             "win": meta[m]["win"], "distance": round(d, 2), "shared": shared[:3],
         })
     wins = [n["win"] for n in neighbors if n["win"] is not None]
@@ -1756,6 +1818,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_asset(self, rel):
+        """Sirve los PNG versionados de Data Dragon bajo scripts/assets/.
+
+        Solo lectura y solo PNG. La ruta pedida se resuelve y se comprueba que
+        siga dentro de ASSETS_ROOT: sin eso, un '..' en la URL leeria cualquier
+        archivo del disco. Se rechaza tambien lo que resuelva a un enlace, para
+        que un symlink dentro de assets/ no saque la lectura de la carpeta.
+        """
+        rel = unquote(rel)
+        if not rel.endswith(".png") or "\\" in rel:
+            self._json({"error": "activo no permitido"}, 404)
+            return
+        try:
+            target = (ASSETS_ROOT / rel).resolve()
+            target.relative_to(ASSETS_ROOT)
+            if target.is_symlink() or not target.is_file():
+                raise OSError
+            body = target.read_bytes()
+        except (OSError, ValueError):
+            self._json({"error": "activo no encontrado"}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(body)))
+        # Versionados por ruta (ddragon/<version>/...): cachear es seguro.
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_clip(self, decision_id):
         conn = get_conn()
         try:
@@ -1828,6 +1919,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if u.path.startswith("/assets/"):
+            self._serve_asset(u.path[len("/assets/"):])
             return
         if u.path == "/clip":
             try:

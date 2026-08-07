@@ -1,9 +1,9 @@
-# lol-coach
+# RiftPattern
 
 **A personal League of Legends coaching engine — behavioral analysis of my own
 ranked games on the climb to Challenger.**
 
-Most stats sites tell you *what* happened (KDA, gold, win rate). lol-coach tries
+Most stats sites tell you *what* happened (KDA, gold, win rate). RiftPattern tries
 to tell you *what you should have decided, and why*. It ingests my ranked games,
 detects the individual **decision points** inside each one, evaluates the choice
 I actually made against the alternatives, and produces a written argument — not a
@@ -28,19 +28,19 @@ dominant pattern is **over-extending while ahead**.
 
 **The dashboard** — every ranked game broken into decision points, each scored by the evaluation function (HEF), filterable by type and by whether I agreed with the engine's call.
 
-![Dashboard overview: stat tiles and the decision list](docs/img/overview.png)
+![Recent matches: portrait, KDA, age, review progress and the detector mix per match](docs/img/partidas.png)
 
 **Each decision becomes an argument** — not a flag. Context, the options with their expected value, the written argument for what was optimal, and the feedback controls that train the preference model. (Here the engine judged an "engage that paid off" as the highest-EV play despite the death — the result is explained by other factors.)
 
-![An expanded decision card with options, EV, and the written argument](docs/img/decision-card.png)
+![An expanded decision: the program's analysis, the evidence, your reasoning and the calibration](docs/img/decision.png)
 
 **Honest progress measurement** — the dominant pattern tracked over a moving window with a Wilson confidence interval. When the intervals overlap, the verdict is "no distinguishable change yet" instead of a cherry-picked win.
 
-![Behavioral-progress card and pattern breakdown](docs/img/progress.png)
+![Behavioral-progress card with its Wilson band, and the pattern breakdown](docs/img/patrones.png)
 
 **A curated review session** — an anti-bias mix of unmarked moments (dominant pattern by worst EV gap, an expensive objective, a hard correct call, and variety) to review without doomscrolling.
 
-![Today's session: a curated set of moments to review](docs/img/session.png)
+![Today's session: a curated set of moments to review](docs/img/sesion.png)
 
 ---
 
@@ -150,7 +150,7 @@ time) and one needs a populated database.
 
 ## Disclaimer
 
-lol-coach isn't endorsed by Riot Games and doesn't reflect the views or opinions
+RiftPattern isn't endorsed by Riot Games and doesn't reflect the views or opinions
 of Riot Games or anyone officially involved in producing or managing Riot Games
 properties. Riot Games and all associated properties are trademarks or registered
 trademarks of Riot Games, Inc.

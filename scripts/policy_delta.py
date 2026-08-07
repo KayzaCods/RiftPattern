@@ -1,4 +1,4 @@
-"""Policy delta en setup de objetivo: mis cuentas vs la referencia (#14 redirigido).
+"""Policy delta en setup de objetivo: mis cuentas vs el jugador de referencia (#14 redirigido).
 
 ¿En que DECISION divergimos cuando hay un objetivo (dragon/heraldo) en juego?
 No en profundidad posicional (exposure_v1 ya la falsifico), sino en la accion
@@ -75,17 +75,16 @@ def build(conn) -> tuple[str, dict]:
 
     out = ["# Policy delta en setup de objetivo — mis cuentas vs el jugador de referencia", ""]
     out.append(
-        "> ¿QUÉ acción elijo yo vs el jugador de referencia cuando hay dragón/heraldo "
-        "en juego? Pelear el objetivo / poner visión / ignorar. Este es el eje que separa "
+        "> ¿QUÉ acción elijo yo vs el jugador de referencia cuando hay dragón/heraldo en juego? "
+        "Pelear el objetivo / poner visión / ignorar. Este es el eje que separa "
         "Master de Challenger (estudio 560k partidas: el combate es plano; la visión "
-        "y la conducta forward-looking, no). **Hipótesis, no veredicto** — la referencia "
-        "es un one-trick y su n es chico. Nada de esto se escribe en la DB."
+        "y la conducta forward-looking, no). **Hipótesis, no veredicto** — la referencia es "
+        "Sona-only y su n es chico. Nada de esto se escribe en la DB."
     )
     out.append("")
     n_own = sum(1 for s, _, _ in rows if s == "own")
     n_ref = sum(1 for s, _, _ in rows if s == REF)
-    out.append(f"Decisiones de objetivo: **{n_own}** mías (master+emerald) · "
-               f"**{n_ref}** de la referencia.")
+    out.append(f"Decisiones de objetivo: **{n_own}** mías (master+emerald) · **{n_ref}** del jugador de referencia.")
     out.append("")
 
     diverges = []
@@ -99,7 +98,7 @@ def build(conn) -> tuple[str, dict]:
         out.append("**Yo:**")
         out += _fmt_dist(do, len(own_ids) < MIN_N) if do else ["  (sin decisiones)"]
         out.append("")
-        out.append("**Referencia:**")
+        out.append("**la referencia:**")
         out += _fmt_dist(dr, len(ref_ids) < MIN_N) if dr else ["  (sin decisiones)"]
         out.append("")
         # Divergencia clara: alguna accion cuyos IC de Jeffreys NO se solapan, con
@@ -119,22 +118,21 @@ def build(conn) -> tuple[str, dict]:
         out.append("")
         for b, aid, po, pr in diverges:
             out.append(f"- **{b[0]} · oro {b[1]}** — {ACTION_ES.get(aid, aid)}: "
-                       f"yo {po*100:.0f}% vs referencia {pr*100:.0f}%")
+                       f"yo {po*100:.0f}% vs el jugador de referencia {pr*100:.0f}%")
     else:
         out.append("## Sin divergencias con n suficiente")
         out.append("")
         out.append("Ningún bucket con n>=8 en ambas cohortes tiene una acción cuyos IC de "
                    "Jeffreys no se solapen. Con este n el estudio no puede afirmar una "
-                   "diferencia de política; es límite de datos (la referencia aporta 20 "
-                   "partidas), no evidencia de que juegues igual.")
+                   "diferencia de política; es límite de datos (la referencia = 20 partidas), no "
+                   "evidencia de que juegues igual.")
 
     return "\n".join(out), {"diverges": diverges, "n_own": n_own, "n_ref": n_ref,
                             "buckets": len(buckets)}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Policy delta vs el jugador de referencia en setup de objetivo")
+    ap = argparse.ArgumentParser(description="Policy delta vs el jugador de referencia en setup de objetivo")
     ap.add_argument("--db", help="ruta a la DB (por defecto, la de config.toml)")
     args = ap.parse_args()
 
@@ -152,8 +150,8 @@ def main() -> int:
         for b, aid, *_ in d:
             print(f"  {b[0]}/{b[1]}: {aid}")
     else:
-        print("Sin divergencias con n>=8 en ambas cohortes (límite de datos de la referencia).")
-    print(f"mías {res['n_own']} · referencia {res['n_ref']} · {res['buckets']} buckets")
+        print("Sin divergencias con n>=8 en ambas cohortes (límite de datos del jugador de referencia).")
+    print(f"mías {res['n_own']} · la referencia {res['n_ref']} · {res['buckets']} buckets")
     print(f"Escrito: {out_path}")
     return 0
 
