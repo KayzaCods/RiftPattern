@@ -222,6 +222,34 @@ CREATE TABLE IF NOT EXISTS exposure_anchors (
     marked_at_utc TEXT NOT NULL
 );
 
+-- Validacion del proxy de vision pre-objetivo. `objective_readiness_v1` cuenta
+-- una ward como "cerca del pit" mirando la posicion de QUIEN la puso en el frame
+-- mas cercano; los frames son por minuto, asi que esa posicion puede tener hasta
+-- 60 s de retraso. De ahi sale el "70% de objetivos sin ward propia cerca del
+-- pit", y no se sabia si era un habito real o un artefacto de medicion.
+-- La tira de minimapa (sub-proyecto D) permite mirar el frame y decidirlo.
+-- Etiquetas: 'near' = tu ward SI aparece cerca del pit (el proxy fallo),
+-- 'far' = aparece lejos (el proxy acerto), 'unreadable' = no se distingue.
+-- Misma PK estable que exposure_anchors, y por el mismo motivo: esto NO es
+-- feedback de una decision y no debe entrar al learner.
+CREATE TABLE IF NOT EXISTS vision_proxy_labels (
+    decision_key TEXT PRIMARY KEY,
+    label TEXT NOT NULL,              -- 'near' | 'far' | 'unreadable'
+    marked_at_utc TEXT NOT NULL
+);
+
+-- La muestra del estudio de vision, CONGELADA. Se elegia ordenando el marco por
+-- hash y cogiendo las primeras 100, pero el marco crece con cada partida nueva
+-- (195 -> 216 al ponerse la ingesta al dia), asi que casos nuevos entraban y
+-- otros salian: el denominador se movia bajo los pies mientras se etiquetaba, y
+-- eso invalida cualquier intervalo calculado despues. Se fija una vez y no se
+-- recalcula. Volver a muestrear exige borrar estas filas a proposito.
+CREATE TABLE IF NOT EXISTS vision_sample (
+    decision_key TEXT PRIMARY KEY,
+    position INTEGER NOT NULL,        -- orden fijo de la tanda
+    frozen_at_utc TEXT NOT NULL
+);
+
 -- Archivo permanente del feedback que `persist_decisions` no puede reasociar
 -- (#19). Re-analizar borra y reinserta las decisiones de una partida; el
 -- feedback se rescata emparejando por la clave estable (detector_id,

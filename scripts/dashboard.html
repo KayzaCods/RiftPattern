@@ -101,7 +101,14 @@ html,body{background:var(--bg);color:var(--ink);overflow-x:clip;
   font-family:var(--font-ui);
   font-size:var(--t-base);line-height:1.5;-webkit-font-smoothing:antialiased;
   font-variant-numeric:tabular-nums}
-body{margin:0}
+body{margin:0;
+  /* Luz ambiental. El fondo era un rectangulo plano; dos radiales por debajo
+     del 8% le dan profundidad sin volverse decoracion. Se perciben sin mirarlos:
+     si se notan, estan demasiado fuertes. */
+  background-image:
+    radial-gradient(circle at 12% 88%, color-mix(in oklab, var(--signal-nav) 7%, transparent), transparent 42%),
+    radial-gradient(circle at 88% 6%,  color-mix(in oklab, var(--det-trade) 5%, transparent), transparent 38%);
+  background-attachment:fixed}
 button{cursor:pointer;font-family:inherit;background:transparent;border:none;outline:none;color:inherit}
 :where(button,a,input,textarea,select,[tabindex]):focus-visible{
   outline:2px solid var(--signal-nav);outline-offset:1px;border-radius:var(--radius-sm)}
@@ -124,7 +131,8 @@ video{width:100%;border-radius:var(--radius-md);background:var(--video-black);ma
 
 /* -- superficies -- */
 .card{background:var(--surface);border:1px solid var(--hairline);
-  border-radius:var(--radius-lg);padding:var(--s5)}
+  border-radius:var(--radius-lg);padding:var(--s5);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03), 0 1px 2px rgba(0,0,0,.35)}
 .well{background:var(--elevated);border-radius:var(--radius-md);padding:10px 12px}
 .sunken{background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--radius-md)}
 
@@ -203,6 +211,77 @@ video{width:100%;border-radius:var(--radius-md);background:var(--video-black);ma
 .note-nav{border-color:color-mix(in oklab,var(--signal-nav) 45%,var(--hairline));background:var(--wash-nav)}
 .note-warn{border-color:color-mix(in oklab,var(--signal-warn) 45%,var(--hairline));background:var(--wash-warn)}
 .note-bad{border-color:color-mix(in oklab,var(--signal-bad) 45%,var(--hairline));background:var(--wash-bad)}
+
+/* Tira de minimapa (evidencia). Presupuesto de enfasis: superficie hundida +
+   hairline, y nada mas -- ni borde de acento, ni glow, ni sombra. Los recortes
+   se distinguen por separacion y por su etiqueta temporal, asi que la tira se
+   entiende en escala de grises. */
+/* Tope de ancho: el recorte nativo del minimapa mide ~283 px de lado a 1080p.
+   Sin tope, a ancho completo (975 px) cada frame escalaba 1.1x y se veia
+   pastoso; con 480 px se REDUCIA a 0.54x y se perdian los detalles finos (las
+   barras de vida son de 4 px y los numeros de ulti/reaparicion de 13 px: a la
+   mitad no se leen). 760 px deja cada frame en ~248 px, es decir ~0.88x: casi
+   nativo en ambos sentidos. */
+.strip{display:flex;gap:var(--s3);align-items:flex-start;max-width:760px}
+.strip-shot{flex:1 1 0;min-width:0;margin:0}
+.strip-img{background:var(--sunken);border:1px solid var(--hairline);
+  border-radius:var(--radius-md);overflow:hidden;width:100%;display:block;padding:0;
+  cursor:zoom-in;position:relative}
+/* El radio de "cerca del pit", a escala. Empezo como un hairline de 1 px al 70%
+   y era invisible sobre el minimapa: oscuro, recargado y a 376 px. Aqui la
+   legibilidad manda sobre la sobriedad — el circulo ES el criterio de la
+   respuesta, no un adorno. Trazo discontinuo grueso + relleno minimo para que
+   "dentro" se lea de un vistazo sin tapar los iconos, que son el dato. */
+.strip-ring{position:absolute;transform:translate(-50%,-50%);border-radius:50%;
+  border:2px dashed rgba(255,255,255,.92);
+  background:rgba(74,155,232,.10);
+  box-shadow:0 0 0 1px rgba(0,0,0,.55), inset 0 0 0 1px rgba(0,0,0,.45);
+  pointer-events:none}
+.strip-img:disabled{cursor:default}
+.strip-img:not(:disabled):hover{border-color:var(--hairline-strong)}
+/* Ampliacion. El recorte nativo son ~280 px y en la tira se ve a 0.8x; para
+   distinguir un icono de ward hay que pasar de 1x, y el navegador no permite
+   hacer zoom sobre una imagen suelta. Se escala con `pixelated` a proposito: al
+   ampliar 3x, interpolar suave inventa bordes que no estan en el frame. */
+/* Ancho FIJO, no max-width: el recorte nativo va de 121 px (clips de 852x480) a
+   272 px (1080p), y con max-width la caja se encogia al tamano del origen —
+   justo al reves de lo que hace falta. Asi un recorte de 121 px se ve a ~6x. */
+.strip-zoom{background:var(--surface);border:1px solid var(--hairline);
+  border-radius:var(--radius-lg);overflow:hidden;width:min(94vw,760px)}
+.strip-zoom-img{display:block;width:100%;height:auto;image-rendering:pixelated;
+  background:var(--sunken)}
+.strip-img img{display:block;width:100%;height:100%;object-fit:contain;
+  image-rendering:auto}
+.strip-shot figcaption{font-size:var(--t-micro);color:var(--ink-faint);
+  margin-top:4px;text-align:center}
+.strip-note{font-size:var(--t-xs);color:var(--ink-faint);background:var(--elevated);
+  border-radius:var(--radius-md);padding:9px 12px}
+
+/* Calibracion del recorte del minimapa. Se abre como capa y no como pestana
+   porque calibrar interrumpe una revision: al cerrarla hay que volver a la misma
+   partida, los mismos filtros y la misma posicion de scroll.
+   Presupuesto de enfasis: la hoja usa superficie + hairline; el rectangulo usa
+   borde de acento + oscurecido de lo que queda fuera, que es lo que hace legible
+   el recorte sin depender del color (se entiende en escala de grises). */
+.cal-backdrop{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.62);
+  display:flex;align-items:flex-start;justify-content:center;padding:var(--s5);overflow-y:auto}
+.cal-sheet{background:var(--surface);border:1px solid var(--hairline);
+  border-radius:var(--radius-lg);width:100%;max-width:1020px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03), 0 12px 32px rgba(0,0,0,.55)}
+.cal-frame{position:relative;background:var(--sunken);border:1px solid var(--hairline);
+  border-radius:var(--radius-md);overflow:hidden;min-height:120px;touch-action:none;
+  cursor:crosshair;user-select:none}
+.cal-frame[data-state="loading"],.cal-frame[data-state="error"]{cursor:default}
+.cal-rect{position:absolute;border:1px solid var(--signal-nav);
+  box-shadow:0 0 0 9999px rgba(0,0,0,.5);pointer-events:none}
+.cal-preview{background:var(--sunken);border:1px solid var(--hairline);
+  border-radius:var(--radius-md);overflow:hidden;min-height:90px;
+  display:flex;align-items:center;justify-content:center}
+.cal-hint{padding:28px 12px;font-size:var(--t-xs);color:var(--ink-faint);text-align:center}
+@media (max-width:640px){
+  .cal-backdrop{padding:0}
+  .cal-sheet{border-radius:0;border-left:0;border-right:0;min-height:100%}
+}
 
 /* -- lectura de una decisión: una secuencia con reglas, no cuatro tarjetas -- */
 .decision-flow{display:flex;flex-direction:column}
@@ -301,6 +380,7 @@ video{width:100%;border-radius:var(--radius-md);background:var(--video-black);ma
  * relleno y el ritmo de cada uno cambian. */
 .panel{background:var(--surface);border:1px solid var(--hairline);
   border-radius:var(--radius-lg);overflow:hidden;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03), 0 1px 2px rgba(0,0,0,.35);
   /* El anclaje automatico de Chrome elige su propia ancla y se peleaba con la
      compensacion explicita del anclaje: entre las dos el scroll saltaba
      1472 px en vez de quedarse quieto. Aqui manda una sola. */
@@ -332,6 +412,7 @@ video{width:100%;border-radius:var(--radius-md);background:var(--video-black);ma
  * trabajando sin buscar el borde. */
 .ticket{background:var(--surface);border:1px solid var(--hairline);
   border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--s3);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
   transition:border-color 160ms ease}
 .ticket:hover{border-color:var(--hairline-strong)}
 .ticket[data-open="1"]{border-color:var(--hairline-strong);background:var(--elevated)}
@@ -524,6 +605,221 @@ function HefPanel({hef}){
   );
 }
 
+// ------------------------------------------------- tira de minimapa
+// EL ANCLAJE TEMPORAL ES EL ESLABON FRAGIL, Y ES INVISIBLE AL REVISAR: la tira
+// se ve perfectamente bien mostrando el momento equivocado. En muerte y objetivo
+// el `game_time_ms` es el DESENLACE (el CHAMPION_KILL, el ELITE_MONSTER_KILL),
+// no la decision: un frame en ese instante muestra a Rengar ya encima de ti, que
+// es confirmacion del resultado y no evidencia decidible. Ahi vive el 76% de las
+// decisiones. Por eso la ventana no es fija sino por detector.
+// La comprobacion al revisar no es "se ve el minimapa" sino "este frame muestra
+// algo que TODAVIA se podia decidir".
+const STRIP_WINDOW = {
+  // Se aproxima y muere: la aproximacion y el desenlace.
+  death_v1:               [-30, -10, 0],
+  // El intercambio es corto.
+  trade_v1:               [-30, -10, 0],
+  // Rotacion: intermedio.
+  tempo_v1:               [-45, -20, 0],
+  // La decision vive en el SETUP, no en el kill; por eso cierra en -15 s y no
+  // incluye el evento. Los 90 s no son arbitrarios: vision_prep.py ya usa
+  // PREP_WINDOW_MS = 90_000 por la misma razon.
+  objective_readiness_v1: [-90, -45, -15],
+};
+const STRIP_FALLBACK = [-30, -10, 0];
+// Medido el 7-ago contra un ascent_full de 2574 s: 9/9 seeks, mediana 21.3 ms,
+// p95 32.3 ms, maximo 68.6 ms. 2 s deja 29x de margen sobre el peor caso medido
+// sin que un seek mudo llegue a colgar la card.
+const STRIP_SEEK_TIMEOUT_MS = 2000;
+// Caché de modulo: colapsar y reabrir una card no vuelve a decodificar.
+const _stripCache = new Map();   // decision_id -> [{off, url}]
+
+// Recorte activo + como abrir la calibracion, sin enhebrar props por los siete
+// sitios donde se instancia DecisionCard.
+const MinimapCtx = React.createContext(null);
+
+function stripLabel(off){ return off === 0 ? "evento" : `−${Math.abs(off)} s`; }
+
+// `probes` (opcional) sustituye la ventana por detector: [{off, label}] en
+// segundos relativos al evento. Lo usa la validacion del proxy de vision, que
+// necesita el frame de JUSTO ANTES y JUSTO DESPUES del segundo en que se puso
+// una ward concreta — comparar -90 s con -45 s no deja ver si un icono acaba de
+// aparecer o llevaba ahi medio minuto.
+// `overlay` (opcional) dibuja un circulo sobre cada recorte, en fracciones del
+// mismo: {cx, cy, r}. Lo usa el estudio de vision para marcar el radio con el que
+// el detector decide "cerca del pit". Son 3500 de 15000 unidades — el 23% del
+// ancho del mapa — y a ojo nadie pone el corte ahi, asi que sin dibujarlo cada
+// caso se juzga con un criterio distinto.
+function MinimapStrip({d, momentMs, probes, overlay}){
+  const cal = React.useContext(MinimapCtx) || {};
+  const crop = cal.crop;
+  const rect = (crop && d.clip_source) ? crop[d.clip_source] : null;
+  // La caché va por decision + juego de instantes: la misma decisión puede
+  // pedirse con la ventana del detector en la card y con sondas alrededor de una
+  // ward en el estudio, y no son los mismos frames.
+  const cacheKey = d.id + "|" + (probes ? probes.map(p=>p.off).join(",") : "det");
+  const [shots, setShots] = useState(() => _stripCache.get(cacheKey) || null);
+  const [state, setState] = useState(() => _stripCache.has(cacheKey) ? "ready" : "idle");
+  const [zoom, setZoom] = useState(null);
+  // Trade ancla en `momentMs` (el segundo real del intercambio, via HP del
+  // recorder). Anclarlo en game_time_ms a secas desplazaria la tira hasta un
+  // minuto respecto del clip que esta justo debajo: es el mismo off-by-one que
+  // costo 34 marcas en dfe6e7a. Mientras no llega, la tira NO se genera; no se
+  // genera con el ancla provisional para regenerarla despues.
+  const esperaMomento = d.detector === "trade_v1" && momentMs === undefined;
+  // Preguntado y sin respuesta: esa partida no tiene snapshots del recorder.
+  // No se cae a `game_time_ms` — tras dfe6e7a apunta al INICIO del minuto, y
+  // anclar ahi desviaria la tira hasta 60 s respecto del clip de justo debajo.
+  // Mejor no dibujar y decir por que.
+  const sinMomento = d.detector === "trade_v1" && momentMs === null;
+
+  useEffect(() => {
+    if(!d.has_clip || !rect || esperaMomento || sinMomento) return;
+    const cacheado = _stripCache.get(cacheKey);
+    if(cacheado){ setShots(cacheado); setState("ready"); return; }
+
+    const moment = (d.detector === "trade_v1" && momentMs != null) ? momentMs : d.game_time_ms;
+    const tEvento = (d.clip_offset_s || 0) + (moment - d.game_time_ms) / 1000;
+    const ventana = probes || (STRIP_WINDOW[d.detector] || STRIP_FALLBACK)
+      .map(off => ({off, label: stripLabel(off)}));
+    // Si un instante cae por debajo de 0 se OMITE ese frame; no se sustituye por
+    // el frame 0, que mostraria el inicio de la grabacion como si fuera el
+    // momento pedido.
+    const pedidos = ventana.map(p => ({off: p.off, label: p.label, t: tEvento + p.off}))
+      .filter(x => x.t >= 0);
+    if(!pedidos.length){ setState("error"); return; }
+
+    let cancelado = false;
+    setState("loading");
+    const v = document.createElement("video");
+    v.preload = "auto";
+    v.muted = true;
+    v.src = `/clip?id=${d.id}`;
+    const liberar = () => { v.removeAttribute("src"); try { v.load(); } catch(_){} };
+
+    // Un seek por vez, reutilizando UN solo elemento. El mp4 lo sirve /clip con
+    // 206 Partial Content, asi que el navegador pide rangos en vez de bajarse el
+    // archivo entero; y al ser same-origin el canvas no queda contaminado.
+    const capturar = (t) => new Promise((resolve) => {
+      let hecho = false;
+      const cerrar = (val) => {
+        if(hecho) return;
+        hecho = true;
+        clearTimeout(reloj);
+        v.removeEventListener("seeked", alBuscar);
+        resolve(val);
+      };
+      const alBuscar = () => {
+        try {
+          const c = document.createElement("canvas");
+          const sw = Math.max(1, Math.round(rect.w * v.videoWidth));
+          const sh = Math.max(1, Math.round(rect.h * v.videoHeight));
+          c.width = sw; c.height = sh;
+          c.getContext("2d").drawImage(v, rect.x * v.videoWidth, rect.y * v.videoHeight,
+            sw, sh, 0, 0, sw, sh);
+          // Calidad alta: el recorte es de ~280 px y se amplia hasta 3x para
+          // distinguir iconos de ward. A 0.85 el artefacto de JPEG competia con
+          // el propio icono. Son ~40 KB por frame, en memoria y sin persistir.
+          cerrar(c.toDataURL("image/jpeg", 0.94));
+        } catch(_) { cerrar(null); }
+      };
+      // Un seek que no responde no puede bloquear los demas: se abandona ese
+      // frame y la tira sigue con el siguiente.
+      const reloj = setTimeout(() => cerrar(null), STRIP_SEEK_TIMEOUT_MS);
+      v.addEventListener("seeked", alBuscar);
+      // currentTime identico al actual no emite `seeked`; el arranque es 0.
+      try { v.currentTime = Math.max(0.04, t); } catch(_) { cerrar(null); }
+    });
+
+    (async () => {
+      await new Promise((res, rej) => {
+        if(v.readyState >= 1) return res();
+        v.addEventListener("loadedmetadata", res, {once:true});
+        v.addEventListener("error", rej, {once:true});
+      });
+      if(cancelado) return;
+      const dur = v.duration || 0;
+      const salida = [];
+      for(const p of pedidos){
+        if(cancelado) return;
+        if(dur && p.t > dur - 0.05) continue;
+        const url = await capturar(p.t);
+        if(url) salida.push({off: p.off, label: p.label, url,
+          w: Math.round(rect.w * v.videoWidth), h: Math.round(rect.h * v.videoHeight)});
+      }
+      if(cancelado) return;
+      if(!salida.length){ setState("error"); return; }
+      _stripCache.set(cacheKey, salida);
+      setShots(salida);
+      setState("ready");
+    })().catch(() => { if(!cancelado) setState("error"); });
+
+    return () => { cancelado = true; liberar(); };
+  }, [cacheKey, rect, momentMs, esperaMomento, sinMomento]);
+
+  if(!d.has_clip) return null;
+
+  // Proporcion del recorte para reservar el hueco antes de tener los frames: sin
+  // esto la tira empuja el resto de la etapa al llegar (salto de layout).
+  const ratio = rect ? (rect.w * 16) / (rect.h * 9) : 1;
+  const ventana = probes || (STRIP_WINDOW[d.detector] || STRIP_FALLBACK)
+    .map(off => ({off, label: stripLabel(off)}));
+
+  const cuerpo = () => {
+    if(!rect) return h("div", {className:"strip-note"},
+      `Sin calibrar el recorte de ${d.clip_source || "este grabador"}. `,
+      h("button", {className:"btn btn-quiet", style:{padding:"0 2px",fontSize:"inherit"},
+        onClick:(e)=>{ e.stopPropagation(); if(cal.open) cal.open(); }}, "Calibrar"));
+    if(esperaMomento) return h("div", {className:"strip-note"}, "Localizando el intercambio…");
+    if(sinMomento) return h("div", {className:"strip-note"},
+      "Esta partida no tiene registro del segundo exacto del intercambio. " +
+      "Sin él la tira se desviaría hasta un minuto respecto del clip.");
+    if(state === "error") return h("div", {className:"strip-note"},
+      "Clip no disponible en disco (ruta movida o eliminada).");
+    const items = state === "ready" && shots
+      ? shots
+      : ventana.map(p => ({off:p.off, label:p.label, url:null}));
+    return h("div", {className:"strip"},
+      ...items.map(s => h("figure", {key:s.off, className:"strip-shot"},
+        h("button", {className:"strip-img", style:{aspectRatio:String(ratio)},
+            onClick:(e)=>{ e.stopPropagation(); if(s.url) setZoom(s); },
+            title: s.url ? "Ampliar" : undefined, disabled:!s.url},
+          // Sin `loading="lazy"`: el src es un data-URI que ya esta en memoria,
+          // no hay peticion que diferir, y aplazarlo solo retrasa el pintado.
+          s.url && h("img", {src:s.url, alt:""}),
+          s.url && overlay && h("span", {className:"strip-ring", "aria-hidden":"true", style:{
+            left:`${overlay.cx*100}%`, top:`${overlay.cy*100}%`,
+            width:`${overlay.r*200}%`, height:`${overlay.r*200}%`}})),
+        h("figcaption", {className:"mono"}, s.label || stripLabel(s.off)))));
+  };
+
+  return h("div", {style:{marginBottom:"var(--s5)"}},
+    h("p", {className:"sec"}, "Minimapa · lo que había en pantalla"),
+    cuerpo(),
+    // Ampliar: el recorte nativo son ~280 px y en la tira se ve a 0.8x. Para
+    // distinguir un icono de ward hace falta pasar de 1x, y el navegador no deja
+    // hacer zoom sobre una imagen suelta.
+    zoom && h("div", {className:"cal-backdrop", role:"dialog", "aria-modal":"true",
+        onClick:()=>setZoom(null),
+        onKeyDown:(e)=>{ if(e.key==="Escape") setZoom(null); }},
+      h("div", {className:"strip-zoom", onClick:(e)=>e.stopPropagation()},
+        h("div", {className:"panel-head"},
+          h("span", {className:"lbl"}, "Minimapa"),
+          h("span", {className:"mono", style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)"}},
+            zoom.label || stripLabel(zoom.off)),
+          // El tamano nativo decide cuanto se puede ampliar: un recorte de
+          // 121 px (clip de 852x480) no da mas de si por mucho que se estire.
+          h("span", {className:"mono muted", style:{fontSize:"var(--t-micro)"}},
+            `origen ${zoom.w || "?"}×${zoom.h || "?"} px`),
+          h("button", {className:"seg", style:{marginLeft:"auto"},
+            onClick:()=>setZoom(null)}, "Cerrar")),
+        h("div", {style:{position:"relative"}},
+          h("img", {src:zoom.url, alt:"", className:"strip-zoom-img"}),
+          overlay && h("span", {className:"strip-ring", "aria-hidden":"true", style:{
+            left:`${overlay.cx*100}%`, top:`${overlay.cy*100}%`,
+            width:`${overlay.r*200}%`, height:`${overlay.r*200}%`}})))));
+}
+
 function DecisionStage({num, icon, title, tone, marker=false, children}){
   return h("section", {className:`decision-stage${marker ? " decision-stage-marked" : ""}${tone ? " decision-stage-"+tone : ""}`},
     marker && h("span", {className:"decision-stage-mark", "aria-hidden":"true"}, icon || num),
@@ -544,15 +840,26 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
   // Momento del intercambio (via HP del recorder): se pide PEREZOSO al abrir el
   // clip de un trade (leer los snapshots de 50-100 MB en la ruta masiva colgaba
   // el dashboard). Mientras no llega, el seek cae al inicio del minuto.
-  const [momentMs, setMomentMs] = useState(null);
+  // Tres estados, no dos: `undefined` = aun no se ha preguntado o esta en
+  // vuelo; `null` = se pregunto y NO hay momento (esa partida no tiene
+  // snapshots del recorder); un numero = el segundo real del intercambio.
+  // Sin distinguir los dos primeros, la tira de un trade sin snapshots se
+  // quedaba en "Localizando…" para siempre.
+  const [momentMs, setMomentMs] = useState(undefined);
   const clipVidRef = useRef(null);
+  // Se pide al EXPANDIR y no solo al abrir el clip: la tira de minimapa tambien
+  // ancla en este momento, y sin el no se genera. El backend lo
+  // cachea por decision, asi que reabrir la misma card no relee los snapshots.
   useEffect(() => {
-    if(!clipOpen || d.detector!=="trade_v1" || momentMs!=null) return;
+    if(!(exp || clipOpen) || d.detector!=="trade_v1" || momentMs!==undefined) return;
     fetch("/api/trade_moment?id="+d.id).then(r=>r.json())
-      .then(j => { if(j && j.moment_ms!=null){ setMomentMs(j.moment_ms);
-        const v=clipVidRef.current; const off=(d.clip_offset_s||0)+(j.moment_ms-d.game_time_ms)/1000-5;
-        if(v && off>0){ try{ v.currentTime=off; }catch(_){} } } }).catch(()=>{});
-  }, [clipOpen, d.id]);
+      .then(j => { const mo = (j && j.moment_ms!=null) ? j.moment_ms : null;
+        setMomentMs(mo);
+        if(mo!=null){
+          const v=clipVidRef.current; const off=(d.clip_offset_s||0)+(mo-d.game_time_ms)/1000-5;
+          if(v && off>0){ try{ v.currentTime=off; }catch(_){} } } })
+      .catch(()=>setMomentMs(null));
+  }, [exp, clipOpen, d.id]);
   // Near-tie: when the top two options are within ~0.10 EV they're practically
   // equivalent — the system isn't really "recommending" one. Surfacing this stops
   // the user from marking "se equivoca" just for picking their own valid option.
@@ -618,6 +925,12 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
           )
         )
       ),
+      // La tira va en la EVIDENCIA (nivel 1 de la jerarquia epistemologica),
+      // nunca en la 01 ni en la 04: muestra lo que estaba DISPONIBLE en
+      // pantalla, no lo que el jugador estaba mirando ni lo que debio ver. La
+      // brecha entre ambas cosas es informacion, no un reproche, y por eso
+      // ningun texto de aqui se redacta como "no viste esto".
+      h(MinimapStrip, {d, momentMs}),
       // PICKER NEUTRO. Mientras el jugador elige NO puede ver la recomendacion
       // del sistema: 273 de 323 marcas (85%) coincidieron con la opcion de max
       // EV mientras el HEF acierta ~52%, asi que la UI dictaba la respuesta y
@@ -706,6 +1019,14 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
       h(DecisionStage, {num:"04", icon:fb==="agree"?"✓":fb==="equivalent"?"≈":fb==="disagree"?"×":"?", title:"Calibración / resultado", tone:fb||"risk", marker:true},
       // El desglose auditable vive AQUI, despues de que el jugador ya eligio:
       // sale del picker para no anclarlo, pero no desaparece del sistema.
+      // GATE: nada del modelo se dibuja hasta que el jugador ha registrado su
+      // eleccion. Sacar el desglose del picker no bastaba -- seguia siendo
+      // visible mas abajo y bastaba con bajar para verlo antes de decidir. No se
+      // difumina ni se deja en silueta: eso tambien da pistas. No se renderiza.
+      best==null ? h("div", {className:"note", style:{marginBottom:"var(--s5)"}},
+        h("b", null, "Disponible después de registrar tu decisión."),
+        " El programa no enseña su recomendación antes de que respondas: si la vieras, tu marca dejaría de ser un juicio independiente y el learner entrenaría contra su propia copia.")
+      : h("div", null,
       h("p", {className:"sec"}, "Lo que recomendaba el programa"),
       isTie && h("div", {className:"note note-nav", style:{color:"var(--signal-nav)",marginBottom:"var(--s3)",display:"flex",alignItems:"flex-start",gap:6}},
         h(Ico,{name:"approx",size:12}),
@@ -734,6 +1055,7 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
             `${d.reward_score>0?"+":""}${d.reward_score}`)),
         h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",lineHeight:1.55,marginTop:3}},
           "Resume lo que pasó en los ~45 s siguientes. Describe el desenlace, no juzga la decisión: una decisión correcta puede acabar mal y una mala puede salir bien.")),
+      ),
       h("div", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
         h("div", {style:{marginLeft:"auto",display:"flex",gap:4,alignItems:"center"}},
           h("span", {style:{fontSize:10,color:"var(--color-text-tertiary)",marginRight:2}}, "Tu veredicto sobre el análisis:"),
@@ -1262,14 +1584,64 @@ function Calibrate(){
 // Cola de revisión: decisiones cuya marca explícita de "opción adecuada"
 // contradice (o confirma) a la fórmula action_fit — los mismos casos del
 // informe scripts/triage_commit_fit.py, pero con salto directo a la decisión.
+// Marcas que dejaron de contar porque el conjunto de opciones cambio bajo ellas.
+// Se conservaban con su nota pero NO aparecian en ninguna vista: para
+// encontrarlas habia que pedir el match_id por consola, y el dashboard ni
+// siquiera lo muestra. Trabajo pendiente invisible es trabajo que se acumula.
+function StaleMarks({stale, onJump}){
+  const [abierto, setAbierto] = useState(false);
+  const [limite, setLimite] = useState(12);
+  const xs = stale || [];
+  if(!xs.length) return null;
+  const cambiadas = xs.filter(x => x.reason === "options_changed").length;
+  const sinFp = xs.length - cambiadas;
+  return h("div", {className:"panel", style:{marginBottom:"var(--s5)"}},
+    h("button", {onClick:()=>setAbierto(a=>!a), className:"panel-head",
+        style:{width:"100%",textAlign:"left",cursor:"pointer",background:"var(--bg)"}},
+      h("span", {className:"lbl"}, "Marcas caducadas"),
+      h("span", {className:"mono", style:{fontSize:"var(--t-xs)",color:"var(--signal-warn)",fontWeight:600}},
+        String(xs.length)),
+      h("span", {className:"muted", style:{fontSize:"var(--t-micro)"}},
+        `${cambiadas} por cambio de opciones · ${sinFp} sin fingerprint (marcas viejas)`),
+      h(Ico,{name:abierto?"up":"down",size:12,color:"var(--ink-faint)",style:{marginLeft:"auto"}})),
+    abierto && h("div", {style:{padding:"var(--s4)"}},
+      h("p", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",lineHeight:1.6,marginBottom:"var(--s4)",maxWidth:"70ch"}},
+        "Tu nota se conserva, pero la opción que elegiste apuntaba a un menú que ya no existe, " +
+        "así que dejó de entrenar. Pulsa una para abrirla y volver a marcarla sobre el eje actual."),
+      ...xs.slice(0, limite).map(x => {
+        const det = DET[x.detector] || {label:x.detector, acc:"var(--ink-faint)"};
+        return h("button", {key:x.id, className:"row",
+            onClick:()=>onJump({id:x.id, match:x.match, cohort:x.cohort}),
+            style:{display:"block",width:"100%",textAlign:"left",background:"none",border:0,
+              borderBottom:"1px solid var(--hairline)",padding:"9px 4px",cursor:"pointer"}},
+          h("div", {style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:2}},
+            h(DetIcon, {detector:x.detector, size:12, color:det.acc}),
+            h("span", {style:{fontSize:"var(--t-xs)",fontWeight:500}}, x.moment || det.label),
+            h("span", {className:"mono muted", style:{fontSize:"var(--t-micro)",marginLeft:"auto"}},
+              `${x.champion} · ${x.time} · ${x.date}`)),
+          h("div", {className:"muted", style:{fontSize:"var(--t-micro)",lineHeight:1.5}},
+            `marcaste «${x.feedback}»`,
+            x.chosen_label ? ` · elegiste: ${x.chosen_label}` : "",
+            x.note ? ` — ${x.note.slice(0,90)}` : ""));
+      }),
+      limite < xs.length && h("button", {className:"seg", style:{marginTop:"var(--s3)"},
+        onClick:()=>setLimite(n=>n+25)}, `Ver más (${xs.length - limite} restantes)`))
+  );
+}
+
 function ReviewQueue({queue, onJump, onRefresh, decisions, fbs, onFb, onSave}){
   const [showAgree, setShowAgree] = useState(false);
   const [expId, setExpId] = useState(null);    // caso expandido INLINE (se revisa aquí, sin saltar de pestaña)
   const [clipId, setClipId] = useState(null);
   if(!queue) return h("div",{className:"muted",style:{fontSize:12,padding:"20px 0",textAlign:"center"}},"Cargando…");
-  if(!queue.n) return h("div",{className:"muted",style:{fontSize:12,padding:"20px 0",textAlign:"center",lineHeight:1.7}},
-    "No hay marcas válidas con fingerprint todavía.", h("br"),
-    "Corre scripts/backfill_feedback_fingerprints.py --apply y recarga; o marca opciones adecuadas en decisiones nuevas.");
+  // Las caducadas se muestran AUNQUE la cola principal este vacia: son trabajo
+  // pendiente por si solas, y es justo cuando no queda nada vigente cuando mas
+  // importa verlas.
+  if(!queue.n) return h("div", null,
+    h(StaleMarks, {stale:queue.stale, onJump}),
+    h("div",{className:"muted",style:{fontSize:12,padding:"20px 0",textAlign:"center",lineHeight:1.7}},
+      "No hay marcas válidas con fingerprint todavía.", h("br"),
+      "Corre scripts/backfill_feedback_fingerprints.py --apply y recarga; o marca opciones adecuadas en decisiones nuevas."));
   const items = (queue.items||[]).filter(x => showAgree || !x.agree);
   const goNext = (id) => {
     const i = items.findIndex(x=>x.id===id);
@@ -1279,6 +1651,7 @@ function ReviewQueue({queue, onJump, onRefresh, decisions, fbs, onFb, onSave}){
     if(next) setTimeout(()=>{ const el=document.getElementById("rq-"+next.id); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); }, 80);
   };
   return h("div", null,
+    h(StaleMarks, {stale:queue.stale, onJump}),
     h("div", {style:{fontSize:12,color:"var(--color-text-secondary)",marginBottom:10,lineHeight:1.6}},
       `Marcaste la opción adecuada en ${queue.n} decisiones válidas; la fórmula (action_fit) te contradice en ${queue.n_disagree}. `,
       "Cada caso es o un defecto de la fórmula o una marca que vale la pena re-juzgar: expándelo aquí mismo, mira el clip, re-marca o anota, y pasa al siguiente."),
@@ -1663,13 +2036,386 @@ function ProgressCard({prog}){
   );
 }
 
+// ------------------------------------------------ calibracion del minimapa (D)
+// El recorte del minimapa NO se puede adivinar: su posicion y su escala dependen
+// de la configuracion del cliente y de la resolucion de grabacion, y ninguna de
+// las dos es observable desde el repositorio. Una fraccion fija fallaria en
+// SILENCIO -- recortaria la esquina equivocada sin que nada avisara -- asi que se
+// arrastra una vez por grabador y se guarda en data/minimap_crop.json.
+// Los grabadores se calibran por separado a proposito: `ascent_full` y
+// `replays_lol_full` son programas distintos y no se asume que compartan HUD.
+const CAL_MAX_W = 720;              // ancho de trabajo del frame, en px de pantalla
+const CAL_SEEK_TIMEOUT_MS = 5000;   // igual que la tira: un seek mudo no cuelga la vista
+
+function MinimapCalibrator({onClose, onSaved}){
+  const [data, setData] = useState(null);      // {crop, sources}
+  const [sel, setSel] = useState(null);        // fuente en calibracion
+  const [rect, setRect] = useState(null);      // recorte en fracciones 0..1
+  const [drag, setDrag] = useState(null);      // arrastre en curso
+  const [frameState, setFrameState] = useState("idle");  // idle|loading|ready|error
+  const [saveState, setSaveState] = useState("idle");    // idle|saving|saved|error
+  const [nudge, setNudge] = useState(0);       // desplazamiento manual del instante (s)
+  const frameRef = useRef(null);               // canvas con el frame COMPLETO
+  const previewRef = useRef(null);             // canvas con el recorte resultante
+  const boxRef = useRef(null);                 // contenedor para medir el arrastre
+
+  const sources = (data && data.sources) || [];
+  const cur = sources.find(s => s.source === sel) || null;
+
+  useEffect(() => {
+    fetch("/api/minimap_crop").then(r=>r.json()).then(d => {
+      setData(d);
+      const first = (d.sources||[]).find(s => s.sample_id!=null);
+      if(first) setSel(first.source);
+    }).catch(()=>setFrameState("error"));
+  }, []);
+
+  // Al elegir fuente (o pedir otro instante) se pinta UN frame completo. El
+  // <video> nunca se monta en el DOM: solo hace de decodificador. El mp4 es
+  // same-origin (lo sirve /clip), asi que el canvas no queda contaminado.
+  useEffect(() => {
+    if(!cur || cur.sample_id==null) return;
+    let cancelled = false;
+    setFrameState("loading");
+    const v = document.createElement("video");
+    v.preload = "auto";
+    v.muted = true;
+    v.src = `/clip?id=${cur.sample_id}`;
+    const cleanup = () => { v.removeAttribute("src"); try{ v.load(); }catch(_){} };
+    const fail = () => { if(!cancelled){ setFrameState("error"); } cleanup(); };
+    const timer = setTimeout(fail, CAL_SEEK_TIMEOUT_MS);
+    v.addEventListener("error", fail);
+    v.addEventListener("loadedmetadata", () => {
+      if(cancelled) return;
+      const base = cur.sample_offset_s || 0;
+      const t = Math.max(0, Math.min((v.duration||0) - 0.1, base + nudge));
+      try { v.currentTime = t; } catch(_) { fail(); }
+    });
+    v.addEventListener("seeked", () => {
+      if(cancelled) return;
+      clearTimeout(timer);
+      const c = frameRef.current;
+      if(!c){ cleanup(); return; }
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext("2d").drawImage(v, 0, 0);
+      setFrameState("ready");
+      cleanup();
+    });
+    return () => { cancelled = true; clearTimeout(timer); cleanup(); };
+  }, [sel, nudge, cur && cur.sample_id]);
+
+  // Al cambiar de fuente se recupera su recorte guardado, si lo tiene.
+  useEffect(() => {
+    if(!sel || !data) return;
+    setRect((data.crop && data.crop[sel]) || null);
+    setSaveState("idle");
+    setNudge(0);
+  }, [sel, data]);
+
+  // Previsualizacion: se redibuja desde el CANVAS del frame, no desde el video,
+  // asi que mover el rectangulo no cuesta otro seek.
+  useEffect(() => {
+    const p = previewRef.current, f = frameRef.current;
+    if(!p || !f || !rect || frameState!=="ready") return;
+    const sx = rect.x*f.width, sy = rect.y*f.height;
+    const sw = Math.max(1, rect.w*f.width), sh = Math.max(1, rect.h*f.height);
+    p.width = 240; p.height = Math.max(1, Math.round(240*(sh/sw)));
+    const ctx = p.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0,0,p.width,p.height);
+    ctx.drawImage(f, sx, sy, sw, sh, 0, 0, p.width, p.height);
+  }, [rect, frameState]);
+
+  const frac = (e) => {
+    const b = boxRef.current.getBoundingClientRect();
+    return {x: Math.min(1, Math.max(0, (e.clientX-b.left)/b.width)),
+            y: Math.min(1, Math.max(0, (e.clientY-b.top)/b.height))};
+  };
+  const onDown = (e) => {
+    if(frameState!=="ready") return;
+    e.preventDefault();
+    const p = frac(e);
+    setDrag(p); setRect(null); setSaveState("idle");
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch(_){}
+  };
+  const onMove = (e) => {
+    if(!drag) return;
+    const p = frac(e);
+    setRect({x: Math.min(drag.x,p.x), y: Math.min(drag.y,p.y),
+             w: Math.abs(p.x-drag.x), h: Math.abs(p.y-drag.y)});
+  };
+  const onUp = () => setDrag(null);
+
+  // El minimapa es cuadrado: forzar la proporcion evita un recorte torcido que
+  // luego deforma cada frame de la tira. Se ancla en la esquina superior
+  // izquierda y se usa el lado mayor, de modo que nunca encoge lo que marcaste.
+  const squareUp = () => {
+    if(!rect) return;
+    const f = frameRef.current;
+    if(!f) return;
+    const ladoPx = Math.max(rect.w*f.width, rect.h*f.height);
+    let w = ladoPx/f.width, h = ladoPx/f.height;
+    w = Math.min(w, 1-rect.x); h = Math.min(h, 1-rect.y);
+    setRect({...rect, w, h});
+    setSaveState("idle");
+  };
+
+  const valido = rect && rect.w>0.02 && rect.h>0.02;
+  const save = () => {
+    if(!valido || !sel) return;
+    setSaveState("saving");
+    fetch("/api/minimap_crop", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({source: sel, rect})})
+      .then(r => r.json())
+      .then(res => {
+        if(res.error) throw new Error(res.error);
+        setData(d => ({...d, crop: res.crop,
+          sources: (d.sources||[]).map(s => s.source===sel ? {...s, calibrated:true} : s)}));
+        setSaveState("saved");
+        if(onSaved) onSaved(res.crop);
+      })
+      .catch(()=>setSaveState("error"));
+  };
+
+  return h("div", {className:"cal-backdrop", role:"dialog", "aria-modal":"true",
+      "aria-label":"Calibrar el recorte del minimapa",
+      onKeyDown:(e)=>{ if(e.key==="Escape") onClose(); }},
+    h("div", {className:"cal-sheet"},
+      h("div", {className:"panel-head"},
+        h("span", {className:"lbl"}, "Recorte del minimapa"),
+        h("button", {onClick:onClose, className:"seg", style:{marginLeft:"auto"}}, "Cerrar")),
+      h("div", {style:{padding:"var(--s5)"}},
+        h("p", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",marginBottom:"var(--s4)",
+            maxWidth:"62ch",lineHeight:1.55}},
+          "Arrastra un rectángulo sobre el minimapa del frame. Se guarda en fracciones " +
+          "del fotograma, así que sobrevive a cambios de resolución. Cada grabador se " +
+          "calibra por separado."),
+
+        // Fuentes. Cada una dice cuantas decisiones cubre: es lo que decide si
+        // vale la pena calibrarla.
+        h("div", {style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:"var(--s5)"}},
+          ...sources.map(s => h("button", {key:s.source, className:"seg",
+              "aria-pressed": sel===s.source, disabled: s.sample_id==null,
+              onClick:()=>setSel(s.source),
+              title: s.sample_id==null ? "sin decisiones con clip: no se puede calibrar" : undefined},
+            s.source,
+            h("span", {className:"mono", style:{color:"var(--ink-faint)"}}, `${s.decisions}`),
+            s.calibrated && h("span", {className:"chip chip-strong",
+              style:{color:"var(--signal-ok)",background:"transparent",
+                borderColor:"var(--signal-ok)"}}, "calibrado")))),
+
+        frameState==="error" && h("div", {className:"note note-bad",
+            style:{color:"var(--signal-bad)",marginBottom:"var(--s4)"}},
+          "No se pudo leer el frame de muestra (clip movido o eliminado en disco). " +
+          "Prueba otro instante o calibra desde otra decisión."),
+
+        h("div", {style:{display:"flex",gap:"var(--s5)",alignItems:"flex-start",flexWrap:"wrap"}},
+          // Frame completo + rectangulo de arrastre.
+          h("div", {style:{flex:"1 1 420px",minWidth:0}},
+            h("div", {ref:boxRef, className:"cal-frame",
+                onPointerDown:onDown, onPointerMove:onMove, onPointerUp:onUp,
+                "data-state":frameState},
+              h("canvas", {ref:frameRef, style:{display:"block",width:"100%",height:"auto"}}),
+              frameState==="loading" && h("div", {className:"cal-hint"}, "Cargando frame…"),
+              rect && h("div", {className:"cal-rect", style:{
+                left:`${rect.x*100}%`, top:`${rect.y*100}%`,
+                width:`${rect.w*100}%`, height:`${rect.h*100}%`}})),
+            h("div", {style:{display:"flex",gap:6,marginTop:"var(--s3)",flexWrap:"wrap",alignItems:"center"}},
+              h("button", {className:"seg", onClick:()=>setNudge(n=>n-30)}, "−30 s"),
+              h("button", {className:"seg", onClick:()=>setNudge(n=>n+30)}, "+30 s"),
+              cur && h("span", {className:"mono muted", style:{fontSize:"var(--t-micro)"}},
+                `decisión ${cur.sample_id} · ${Math.max(0,Math.round((cur.sample_offset_s||0)+nudge))} s`))),
+
+          // Resultado. Es lo unico que prueba que el recorte esta bien: el
+          // rectangulo puede parecer correcto y estar una fraccion corrido.
+          h("div", {style:{flex:"0 0 240px"}},
+            h("p", {className:"sec"}, "Así se verá en la tira"),
+            h("div", {className:"cal-preview"},
+              valido
+                ? h("canvas", {ref:previewRef, style:{display:"block",width:"100%",height:"auto"}})
+                : h("div", {className:"cal-hint"}, "Sin recorte")),
+            rect && h("div", {className:"mono muted", style:{fontSize:"var(--t-micro)",marginTop:6,lineHeight:1.6}},
+              `x ${rect.x.toFixed(3)} · y ${rect.y.toFixed(3)}`, h("br"),
+              `w ${rect.w.toFixed(3)} · h ${rect.h.toFixed(3)}`),
+            h("div", {style:{display:"flex",flexDirection:"column",gap:6,marginTop:"var(--s4)"}},
+              h("button", {className:"btn", onClick:squareUp, disabled:!valido},
+                "Cuadrar proporción"),
+              h("button", {className:"btn btn-primary", onClick:save,
+                  disabled:!valido || saveState==="saving"},
+                saveState==="saving" ? "Guardando…" : "Guardar recorte")),
+            saveState==="saved" && h("div", {style:{fontSize:"var(--t-micro)",color:"var(--signal-ok)",marginTop:6}},
+              "Guardado en data/minimap_crop.json"),
+            saveState==="error" && h("div", {style:{fontSize:"var(--t-micro)",color:"var(--signal-bad)",marginTop:6}},
+              "No se pudo guardar."))
+        )
+      )
+    ));
+}
+
+// ----------------------------- validacion del proxy de vision pre-objetivo (D)
+// Uno a uno y no una lista con scroll: son 100 casos y cada uno es una sola
+// pregunta binaria. El coste dominante es el raton, asi que el mazo avanza solo
+// al etiquetar y todo se puede hacer con 1/2/3.
+// Los botones preguntan SOLO lo que se ve. La version anterior les colgaba
+// "el proxy falló" / "el proxy acertó" y eso pedia dos juicios a la vez: la
+// observacion y el veredicto sobre el programa. Interpretar es trabajo del
+// analisis, no de quien mira el frame — y ademas invitaba a leerlo como si el
+// que fallaba o acertaba fuera el jugador.
+const VISION_BTNS = [
+  {key:"near",       n:"1", label:"Dentro del círculo"},
+  {key:"far",        n:"2", label:"Fuera del círculo"},
+  {key:"unreadable", n:"3", label:"No se distingue"},
+];
+
+// Sondas alrededor del segundo exacto de la ward. +-4 s porque el keyframe medio
+// esta a 1 s y el icono aparece en el frame siguiente a la colocacion: con ese
+// margen el "antes" no puede contenerla ya y el "despues" no puede haberla
+// perdido todavia. Se limitan a dos wards (cuatro frames) para acotar el seek.
+const VISION_PROBE_S = 4;
+const VISION_MAX_WARDS = 2;
+// Posicion dentro del VIDEO, que es la grabacion entera de 30-40 min. Sin esto
+// hay que buscar el momento a mano en la barra del reproductor.
+function mmssOf(s){
+  const t = Math.max(0, Math.round(s));
+  return `${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`;
+}
+function visionProbes(offs){
+  const fmt = (t) => `${t<0?"−":"+"}${Math.abs(t).toFixed(1)} s`;
+  return (offs || []).slice(0, VISION_MAX_WARDS).flatMap(t => [
+    {off: t - VISION_PROBE_S, label: fmt(t - VISION_PROBE_S)},
+    {off: t + VISION_PROBE_S, label: fmt(t + VISION_PROBE_S)},
+  ]);
+}
+
+function VisionStudyView({data, onLabel, onRefresh}){
+  const [i, setI] = useState(0);
+  const [clip, setClip] = useState(false);
+  const items = (data && data.moments) || [];
+  const cur = items[i] || null;
+  const mover = (paso) => { setClip(false); setI(x => Math.max(0, Math.min(items.length-1, x+paso))); };
+  const marcar = (label) => {
+    if(!cur) return;
+    onLabel(cur.id, cur.key, cur.vision_label===label ? null : label);
+    if(cur.vision_label !== label) setTimeout(()=>mover(1), 120);
+  };
+  useEffect(() => {
+    const h2 = (e) => {
+      if(e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+      const b = VISION_BTNS.find(x => x.n === e.key);
+      if(b){ e.preventDefault(); marcar(b.key); return; }
+      if(e.key==="ArrowRight"){ e.preventDefault(); mover(1); }
+      if(e.key==="ArrowLeft"){ e.preventDefault(); mover(-1); }
+    };
+    window.addEventListener("keydown", h2);
+    return () => window.removeEventListener("keydown", h2);
+  });
+
+  if(!data) return h("div", {style:{padding:"40px 0",textAlign:"center",color:"var(--ink-faint)",fontSize:13}}, "Cargando…");
+  const hechas = data.n_marked || 0;
+  const [lo, hi] = (cur && cur.interval) || [0,0];
+
+  return h("div", null,
+    h("div", {className:"note note-nav", style:{marginBottom:"var(--s5)",lineHeight:1.6}},
+      h("b", null, "¿El icono nuevo cae dentro del círculo?"),
+      " Compara los dos frames: el que aparece en el segundo y no está en el primero es tu ward. " +
+      "El círculo es el radio exacto con el que el programa decide «cerca del pit» (3500 de 15000 " +
+      "unidades, casi un cuarto del mapa — es mucho más grande de lo que parece).",
+      h("div", {style:{marginTop:6,color:"var(--ink-faint)",fontSize:"var(--t-micro)"}},
+        "Responde solo lo que ves; qué significa es cosa del análisis. " +
+        "Esto no es feedback y no entra al learner. Si no distingues el icono, «no se distingue» " +
+        "es una respuesta válida, no un fallo tuyo.")),
+
+    h("div", {style:{display:"flex",alignItems:"center",gap:"var(--s4)",marginBottom:"var(--s4)",flexWrap:"wrap"}},
+      h("span", {className:"mono", style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)"}},
+        `${i+1} / ${items.length}`),
+      h("span", {style:{fontSize:"var(--t-xs)",color: hechas>0?"var(--signal-ok)":"var(--ink-faint)",fontWeight:600}},
+        `${hechas} etiquetadas`),
+      h("span", {className:"muted", style:{fontSize:"var(--t-micro)"}},
+        `marco completo: ${data.frame_total}`),
+      h("div", {style:{marginLeft:"auto",display:"flex",gap:4}},
+        h("button", {className:"seg", onClick:()=>mover(-1), disabled:i===0}, "←"),
+        h("button", {className:"seg", onClick:()=>mover(1), disabled:i>=items.length-1}, "→"),
+        h("button", {className:"seg", onClick:onRefresh}, "Actualizar"))),
+
+    !cur ? h("div", {style:{padding:"40px 0",textAlign:"center",color:"var(--ink-faint)",fontSize:13}},
+             "No hay casos en el marco.")
+      : h("div", {className:"panel"},
+        h("div", {className:"panel-head"},
+          h(DetIcon, {detector:"objective_readiness_v1", size:13, color:DET.objective_readiness_v1.acc}),
+          h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600}}, cur.objective || "Objetivo"),
+          h(RowMeta, {champion:cur.champion, date:cur.date, time:cur.time}),
+          h("a", {href:`?dec=${cur.id}`, target:"_blank", className:"mono",
+            style:{marginLeft:"auto",fontSize:"var(--t-micro)",color:"var(--signal-nav)"}},
+            `dec ${cur.id}`)),
+        h("div", {style:{padding:"var(--s5)"}},
+          h("div", {className:"well", style:{marginBottom:"var(--s5)",fontSize:"var(--t-xs)",lineHeight:1.7}},
+            "Pusiste ", cur.your_ward_offsets_s.length===1 ? "una ward" : `${cur.your_ward_offsets_s.length} wards`,
+            " a ", h("b", {className:"mono"}, cur.your_ward_offsets_s.map(t=>`${t} s`).join(" · ")),
+            " del objetivo",
+            cur.n_your_wards_in_window > cur.your_ward_offsets_s.length
+              ? ` (${cur.n_your_wards_in_window} en toda la ventana)` : "",
+            ". Cada par de frames es de 4 s antes y 4 s después de una de ellas: " +
+            "si el icono aparece en el segundo y no está en el primero, esa ward es la tuya. ",
+            h("span", {className:"muted"}, "Ningún aliado warde­ó en ese hueco, por eso no puede ser de otro. " +
+              "Pulsa una imagen para ampliarla."),
+            // Sin esto hay que buscar el objetivo a mano dentro de una grabacion
+            // de 30-40 min: el clip es la partida entera, no un recorte.
+            cur.clip_offset_s!=null && h("div", {style:{marginTop:"var(--s3)",
+                paddingTop:"var(--s3)",borderTop:"1px solid var(--hairline)"}},
+              "En el vídeo: el objetivo cae en ", h("b",{className:"mono"}, mmssOf(cur.clip_offset_s)),
+              " y tu ward en ", h("b",{className:"mono"}, mmssOf(cur.clip_offset_s + cur.your_ward_offsets_s[0])),
+              h("span",{className:"muted"}, ` · minuto ${cur.time} de partida`))),
+          // El eje Y del juego crece hacia arriba y el de la imagen hacia abajo:
+          // sin invertirlo el circulo cae en el foso contrario.
+          h(MinimapStrip, {d:cur, probes:visionProbes(cur.your_ward_offsets_s),
+            overlay: (cur.pit_x!=null && cur.map_max_units) ? {
+              cx: cur.pit_x / cur.map_max_units,
+              cy: 1 - (cur.pit_y / cur.map_max_units),
+              r: cur.near_pit_units / cur.map_max_units} : null}),
+          // Salida de emergencia: cuando dos frames no bastan, el clip completo
+          // en el momento de la ward resuelve la duda sin salir de la tanda.
+          h("div", {style:{marginTop:"var(--s4)"}},
+            h("button", {className:"seg", onClick:()=>setClip(c=>!c)},
+              h(Ico,{name:"play",size:12}),
+              clip ? "Ocultar clip"
+                   : `Ver el clip desde ${mmssOf((cur.clip_offset_s||0)+cur.your_ward_offsets_s[0]-6)}`),
+            clip && h("video", {controls:true, preload:"metadata", src:`/clip?id=${cur.id}`,
+              onLoadedMetadata:(e)=>{ const off=(cur.clip_offset_s||0)+cur.your_ward_offsets_s[0]-6;
+                if(off>0){ try{ e.target.currentTime=off; }catch(_){} } },
+              onError:(e)=>{e.target.insertAdjacentHTML('afterend','<div class="muted" style="font-size:12px;margin-top:8px">Clip no disponible en disco.</div>');e.target.remove();}})),
+          h("div", {style:{display:"flex",gap:"var(--s3)",marginTop:"var(--s5)",flexWrap:"wrap"}},
+            ...VISION_BTNS.map(b => h("button", {key:b.key, className:"btn",
+                "aria-pressed": cur.vision_label===b.key,
+                onClick:()=>marcar(b.key),
+                style: cur.vision_label===b.key
+                  ? {borderColor:"var(--signal-nav)",color:"var(--signal-nav)"} : undefined},
+              h("span", {className:"mono", style:{color:"var(--ink-faint)"}}, b.n),
+              b.label,
+              h("span", {className:"muted", style:{fontWeight:400}}, b.hint)))))));
+}
+
 const DASH_VIEW_STATE = "lolcoach.dashboard.view.v1";
 // Vistas validas para el deep-link ?tab=; cualquier otro valor se ignora.
-const TAB_KEYS = ["session","trades","anchors","decisions","patterns","calibrate","review"];
+const TAB_KEYS = ["session","trades","anchors","vision","decisions","patterns","calibrate","review"];
 function readViewState(){
   try { const raw=sessionStorage.getItem(DASH_VIEW_STATE); const v=raw&&JSON.parse(raw); return v&&typeof v==="object" ? v : {}; }
   catch(_) { return {}; }
 }
+function IngestStatusBanner({ingest}){
+  if(!ingest) return null;
+  const partial = ingest.state === "partial";
+  const failed = ingest.state === "failed" || Boolean(ingest.error);
+  if(!partial && !failed && ingest.key_alive !== false) return null;
+  const title = partial ? "Ingesta parcial" : failed ? "La ingesta falló" : "API key de Riot rechazada";
+  const detail = ingest.key_alive === false
+    ? " La comprobación de la API key de Riot falló. Revisa la key en developer.riotgames.com y config.toml."
+    : " Revisa el registro de ingesta para identificar los pasos que fallaron.";
+  return h("div", {className:"note note-bad", style:{marginBottom:"var(--s5)",color:"var(--signal-bad)"}},
+    h("b", null, title), detail,
+    ingest.last_run ? ` Última corrida: ${ingest.last_run}.` : ""
+  );
+}
+
 function App(){
   const restoredView = useRef(readViewState()).current;
   const requestedMatch = useRef(new URLSearchParams(location.search).get("match")).current;
@@ -1738,9 +2484,29 @@ function App(){
   const [queue, setQueue] = useState(null);         // cola de revisión (/api/review_queue)
   const [ingest, setIngest] = useState(null);       // salud del pipeline (/api/ingest_status, banner de key muerta)
   const [progress, setProgress] = useState(null);   // progreso conductual (#10, bloque progress de /api/patterns)
+  // Recorte del minimapa por grabador (sub-proyecto D). Vive en App y no en la
+  // card: lo comparten todas las decisiones abiertas y se pide UNA vez.
+  const [calOpen, setCalOpen] = useState(false);
+  const [minimapCrop, setMinimapCrop] = useState(null);   // null = aun sin cargar
+  useEffect(() => { fetch("/api/minimap_crop").then(r=>r.json())
+    .then(d => setMinimapCrop(d.crop || {})).catch(()=>setMinimapCrop({})); }, []);
   const [exposureData, setExposureData] = useState(null);   // Exposicion (#17 Fase 1, /api/exposure)
   const [anchorData, setAnchorData] = useState(null);       // Anchor set (#17, /api/anchor_set)
   const loadAnchors = () => fetch("/api/anchor_set").then(r=>r.json()).then(setAnchorData).catch(()=>{});
+  // Validacion del proxy de vision (D). Se carga PEREZOSA, al entrar a su
+  // pestana: el marco recorre los eventos de ward de cada objetivo y no tiene
+  // por que pagarse en el arranque de todas las demas vistas.
+  const [visionData, setVisionData] = useState(null);
+  const loadVision = () => fetch("/api/vision_study").then(r=>r.json()).then(setVisionData).catch(()=>{});
+  // Optimista y por clave ESTABLE, igual que el anchor set: la fila se pinta al
+  // instante y el POST persiste aparte, sin recargar (el mazo no debe saltar).
+  const setVisionLabel = (id, key, label) => {
+    setVisionData(d => d && ({...d,
+      moments: d.moments.map(x => x.key===key ? {...x, vision_label: label} : x),
+      n_marked: d.moments.filter(x => x.key===key ? label : x.vision_label).length}));
+    fetch("/api/vision_label",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id, label})}).catch(()=>{});
+  };
   // Etiquetar es optimista: la fila se pinta al instante y el POST persiste por
   // clave estable (sobrevive re-analisis). Sin recarga: la lista no debe saltar.
   const setAnchorLabel = (id, label) => {
@@ -1818,6 +2584,7 @@ function App(){
     loadAnchors();
     fetch("/api/ingest_status").then(r=>r.json()).then(setIngest).catch(()=>{});
   }, []);
+  useEffect(() => { if(tab==="vision" && !visionData) loadVision(); }, [tab]);
 
   // Solo preferencias de vista efímeras: nunca cuenta, Riot ID ni texto privado.
   useEffect(() => {
@@ -1988,6 +2755,7 @@ function App(){
     {key:"session",   label:"Sesión de hoy", count: sessionData && sessionData.moments ? sessionData.moments.length : null},
     {key:"trades",    label:"Cola de trades", count: tradeData && tradeData.total || null},
     {key:"anchors",   label:"Validar exposición", count: anchorData && anchorData.total ? `${anchorData.n_marked}/${anchorData.total}` : null},
+    {key:"vision",    label:"Visión pre-objetivo", count: visionData && visionData.total ? `${visionData.n_marked}/${visionData.total}` : null},
     {key:"decisions", label:"Decisiones",   count: stats ? stats.decisions : null},
     {key:"patterns",  label:"Patrones",     count: patterns.length || null},
     {key:"calibrate", label:"Calibrar",     count: null},
@@ -1995,7 +2763,8 @@ function App(){
   ];
   const VIEW_TITLE = Object.fromEntries(NAV.map(n => [n.key, n.label]));
 
-  return h("div", {className:"shell"},
+  return h(MinimapCtx.Provider, {value:{crop:minimapCrop, open:()=>setCalOpen(true)}},
+    h("div", {className:"shell"},
     h("nav", {className:"nav", "aria-label":"Secciones"},
       h("div", null,
         h("div", {className:"nav-brand"},
@@ -2018,18 +2787,16 @@ function App(){
             .map(a => h("button", {key:a.key, onClick:()=>setAcc(a.key),
               className:"seg", "aria-pressed": acc===a.key,
               style:{justifyContent:"flex-start",width:"100%"}}, a.label))
-        )
+        ),
+        // Ajuste de una sola vez por grabador: vive al pie de la navegacion
+        // porque no es una vista, es una preferencia del equipo de captura.
+        h("button", {onClick:()=>setCalOpen(true), className:"btn btn-quiet",
+          style:{justifyContent:"flex-start",width:"100%",marginTop:"var(--s4)",
+            fontSize:"var(--t-micro)"}}, "Recorte del minimapa")
       )
     ),
     h("main", {className:"main"},
-    // Banner de pipeline muerto (#11): la key expirada de 2026-06 paso 7 dias en
-    // silencio porque key_alive solo vivia en ingest_status.json.
-    ingest && ingest.key_alive===false && h("div", {className:"note note-bad", style:{marginBottom:"var(--s5)",color:"var(--signal-bad)"}},
-      h("b", null, "API key de Riot muerta"),
-      ` — ingesta parada${ingest.days_since_ingest!=null ? ` hace ${ingest.days_since_ingest} día${ingest.days_since_ingest===1?"":"s"}` : ""}` +
-      `${ingest.last_ingested_utc ? ` (última partida ingestada: ${String(ingest.last_ingested_utc).slice(0,10)})` : ""}. ` +
-      "Renueva la key en developer.riotgames.com y pégala en config.toml; auto_ingest se pone al día solo."
-    ),
+    h(IngestStatusBanner, {ingest}),
     h("div", {className:"stats"},
       ...statCards.map(s => h(StatCard, {key:s.label, ...s}))
     ),
@@ -2165,11 +2932,16 @@ function App(){
         ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "Sin patrones detectados para esta cuenta")
         : patterns.map(p => h(PatternCard, {key:p.id, p}))
     ),
+    tab==="vision" && h(VisionStudyView, {data:visionData, onLabel:setVisionLabel, onRefresh:loadVision}),
     tab==="calibrate" && h(Calibrate),
     tab==="review" && h(ReviewQueue, {queue, onJump:jumpTo, onRefresh:loadQueue,
       decisions, fbs, onFb:setFb, onSave:saveContext})
-    )
-  );
+    ),
+    // Capa, no vista: calibrar no puede costar la partida, los filtros ni la
+    // posicion de scroll de la revision que estabas haciendo.
+    calOpen && h(MinimapCalibrator, {onClose:()=>setCalOpen(false),
+      onSaved:(crop)=>setMinimapCrop(crop)})
+  ));
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(h(App));

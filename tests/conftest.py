@@ -8,12 +8,58 @@ the events it needs.
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
+from lol_coach import config as _config
 from lol_coach import db as dbmod
+
+
+def _install_synthetic_config() -> None:
+    """Let a fresh clone (no config.toml) import scripts/dashboard.py.
+
+    dashboard.py loads the config at import time, so without a config.toml every
+    dashboard test would skip. Only when neither $LOL_COACH_CONFIG nor
+    PROJECT_ROOT/config.toml exists, write a synthetic config into a temp dir
+    OUTSIDE the repo and point $LOL_COACH_CONFIG at it. A real setup (config.toml
+    present, or the variable already set) is left exactly as it is. Nothing here
+    touches the network: the key is a placeholder and no test calls Riot.
+    """
+    if os.environ.get(_config.CONFIG_ENV_VAR) or _config.DEFAULT_CONFIG.exists():
+        return
+    root = Path(tempfile.mkdtemp(prefix="lol_coach_test_cfg_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    (root / "raw").mkdir()
+    cfg = root / "config.toml"
+    cfg.write_text(
+        "[riot]\n"
+        'api_key = "RGAPI-00000000-0000-0000-0000-000000000000"\n'
+        'routing = "americas"\n'
+        'platform = "la1"\n'
+        "[[riot.accounts]]\n"
+        'game_name = "Jugador"\n'
+        'tag_line = "TEST"\n'
+        'cohort = "platinum"\n'
+        "[paths]\n"
+        f"data_raw = {json.dumps((root / 'raw').as_posix())}\n"
+        f"sqlite_db = {json.dumps((root / 'synthetic.db').as_posix())}\n"
+        "replays_lol_dirs = []\n"
+        'outplayed_dir = ""\n'
+        "[recorder]\n"
+        "poll_interval_s = 1.0\n",
+        encoding="utf-8",
+    )
+    os.environ[_config.CONFIG_ENV_VAR] = str(cfg)
+
+
+# Runs at conftest import, i.e. before any test module imports dashboard.py.
+_install_synthetic_config()
 
 
 @pytest.fixture
@@ -65,7 +111,7 @@ def insert_event(conn, match_id, ts_ms, etype, payload, *, frame_index=0, pid=No
     )
 
 
-def ten_player_match(conn, match_id="TEST"):
+def ten_player_match(conn, match_id="TEST", *, frame_times=None):
     """Insert a match, its 10 participants, and per-minute frames (positions,
     level, gold, cs). Returns a dict with useful ids for the test."""
     insert_match(conn, match_id)
@@ -76,7 +122,7 @@ def ten_player_match(conn, match_id="TEST"):
             "team_position, champion_name, win) VALUES (?,?,?,?,?,?,?)",
             (match_id, pid, puuid, team, pos, champ, 1 if team == 100 else 0),
         )
-        for fi, ts in enumerate(FRAME_TS, start=8):
+        for fi, ts in (frame_times if frame_times is not None else enumerate(FRAME_TS, start=8)):
             # cs climbs a little each frame so wave/cs helpers have signal.
             cs = 80 + fi * 4
             conn.execute(
@@ -99,7 +145,7 @@ def set_timeline_json(conn, match_id, path, frames):
     conn.commit()
 
 
-def damage_frame(**taken_by_pid):
+def damage_frame(*, timestamp=None, **taken_by_pid):
     """One timeline frame: {pid: physicalDamageTaken}. Cumulative across frames
     (Riot's damageStats are running totals)."""
     pfs = {
@@ -107,4 +153,7 @@ def damage_frame(**taken_by_pid):
                                    "trueDamageTaken": 0}}
         for pid, v in taken_by_pid.items()
     }
-    return {"participantFrames": pfs}
+    frame = {"participantFrames": pfs}
+    if timestamp is not None:
+        frame["timestamp"] = timestamp
+    return frame

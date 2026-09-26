@@ -29,12 +29,13 @@ from the decision list — the player should not have to re-judge what went well
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from ..context import build_world_state, map_lane, map_side
+from ..context import WorldState, build_world_state, map_lane, map_side
 from .base import Decision, Option
 from .features import (
     ACTION_ATTRITION,
@@ -53,6 +54,7 @@ DETECTOR_ID = "trade_v1"
 
 LANE_PHASE_FIRST_MIN = 2     # ignore the walk-to-lane minute
 LANE_PHASE_LAST_MIN = 14     # after this, fights are skirmishes, not lane trades
+DUO_MAX_DISTANCE = 2500.0    # lane-phase co-presence; farther means no duo trade
 MIN_EXCHANGE_DMG = 250       # combined duo damage in a minute to call it a trade
 MIN_ENEMY_DMG = 150          # enemy duo must have taken meaningful damage too:
                              # d_en~0 is unilateral poke, not a bilateral exchange
@@ -116,20 +118,74 @@ def _taken_total(pf: dict) -> float:
         + (d.get("trueDamageTaken") or 0)
 
 
-def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
+@dataclass(frozen=True)
+class TradeCandidate:
+    """One merged trade run as the scanner emits it, before PRE or evaluation.
+
+    `m_start`/`m_end` are FRAME INDICES (the run covers the clock window
+    [m_start-1, m_end]). `d_us`/`d_en` are the raw accumulated deltas exactly as
+    the detector sums them — no int() here, so a caller can compare them against
+    the persisted ints itself. `stats` is our HP/mana at the END of the run.
+    """
+    m_start: int
+    m_end: int
+    kind: str  # "bad" | "good"
+    d_us: float | int
+    d_en: float | int
+    stats: dict
+
+
+@dataclass
+class TradeInventory:
+    """Everything the scan of one match produced: match metadata, the raw frames
+    and the merged candidates in emission order (duplicates are NOT collapsed)."""
+    match_id: str
+    us_id: int
+    our_team: int
+    parts: dict
+    my_duo: list[int]
+    enemy_duo: list[int]
+    frames: list
+    candidates: list[TradeCandidate]
+
+
+def _read_timeline(path: str) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _read_snapshots(session_dir: str) -> list:
+    return load_snapshots(Path(session_dir))
+
+
+def _collect_trade_candidates(conn: sqlite3.Connection, match_id: str, *,
+                              timeline_loader=None, snapshot_loader=None,
+                              has_resource=None) -> Optional[TradeInventory]:
+    """The scanner of trade_v1: trigger rules, guards and the run merge, nothing else.
+
+    Split out of analyze_trades so a maintenance tool can inventory the candidates
+    of a historical match with the detector's own rules — never a copy of them —
+    without resolving PRE or evaluating options. The loaders let that tool read
+    frozen copies of the sources; their defaults are exactly the readers
+    analyze_trades always used. Returns None wherever analyze_trades gave up
+    before scanning.
+    """
+    timeline_loader = timeline_loader or _read_timeline
+    snapshot_loader = snapshot_loader or _read_snapshots
+    has_resource = has_resource or has_meaningful_resource
+
     match = conn.execute(
         "SELECT our_puuid, timeline_json_path FROM matches WHERE match_id = ?", (match_id,)
     ).fetchone()
     if not match or not match["timeline_json_path"]:
-        return []
+        return None
     us = conn.execute(
         "SELECT participant_id, champion_name, team_id, team_position FROM participants "
         "WHERE match_id = ? AND puuid = ?", (match_id, match["our_puuid"]),
     ).fetchone()
     if us is None or us["team_position"] not in ("UTILITY", "BOTTOM"):
-        return []  # lane-trade analysis is a bot-lane concept (player's own framing)
+        return None  # lane-trade analysis is a bot-lane concept (player's own framing)
     us_id, our_team = us["participant_id"], us["team_id"]
-    _has_resource = has_meaningful_resource(us["champion_name"] or "")
+    _has_resource = has_resource(us["champion_name"] or "")
 
     parts = {r["participant_id"]: r for r in conn.execute(
         "SELECT participant_id, team_id, team_position, champion_name FROM participants "
@@ -139,15 +195,15 @@ def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
     enemy_duo = [pid for pid, p in parts.items()
                  if p["team_id"] != our_team and p["team_position"] in ("UTILITY", "BOTTOM")]
     if len(my_duo) < 2 or len(enemy_duo) < 2:
-        return []
+        return None
 
     try:
-        timeline = json.loads(Path(match["timeline_json_path"]).read_text(encoding="utf-8"))
+        timeline = timeline_loader(match["timeline_json_path"])
     except (OSError, ValueError):
-        return []
+        return None
     frames = (timeline.get("info") or {}).get("frames") or []
     if len(frames) < LANE_PHASE_FIRST_MIN + 2:
-        return []
+        return None
 
     # Cumulative damage-taken per duo per frame -> per-minute deltas.
     def duo_taken(frame, duo):
@@ -182,13 +238,13 @@ def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
     # Recorder snapshots (our exact HP/mana). Optional: damage deltas alone suffice.
     session_row = conn.execute(
         "SELECT session_dir FROM sessions WHERE match_id = ?", (match_id,)).fetchone()
-    snapshots = (load_snapshots(Path(session_row["session_dir"]))
+    snapshots = (snapshot_loader(session_row["session_dir"])
                  if session_row and session_row["session_dir"] else [])
 
     # FRAME INDEX vs CLOCK INTERVAL — the distinction the original code lost.
-    # Match-V5 frame `m` is a snapshot at clock m*60s (verified: exact multiples
-    # of 60s, ~4ms/min of drift). Its damageStats are cumulative, so the delta
-    # frames[m] - frames[m-1] describes the interval [(m-1)*60s, m*60s]. Below,
+    # Match-V5 frames carry actual timestamps with jitter around nominal minutes.
+    # Their damageStats are cumulative: frames[m] - frames[m-1] describes
+    # (frames[m-1].timestamp, frames[m].timestamp]. Below,
     # `m` is ALWAYS a frame index; the exchange it describes happened during the
     # minute BEFORE that frame.
     last_min = min(LANE_PHASE_LAST_MIN, len(frames) - 1)
@@ -219,6 +275,23 @@ def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
             )
             if not (in_bot_lane or in_bot_quadrant_our_side):
                 continue
+        other_id = next(pid for pid in my_duo if pid != us_id)
+        fr2 = conn.execute(
+            "SELECT position_x x, position_y y FROM timeline_frames WHERE match_id=? AND "
+            "participant_id=? ORDER BY ABS(timestamp_ms-?), timestamp_ms LIMIT 1",
+            (match_id, other_id, int((m - 0.5) * 60_000))).fetchone()
+        if fr2 and fr2["x"] is not None and fr2["y"] is not None:
+            adc_in_bot_lane = map_lane(fr2["x"], fr2["y"]) == "bot lane"
+            adc_in_bot_quadrant_our_side = (
+                fr2["x"] > 7500 and fr2["y"] < 7500
+                and map_side(fr2["x"], fr2["y"], our_team) == "nuestro lado"
+            )
+            if not (adc_in_bot_lane or adc_in_bot_quadrant_our_side):
+                continue
+        if (fr and fr["x"] is not None and fr["y"] is not None
+                and fr2 and fr2["x"] is not None and fr2["y"] is not None
+                and math.hypot(fr["x"] - fr2["x"], fr["y"] - fr2["y"]) > DUO_MAX_DISTANCE):
+            continue
         if m in player_death_frame:
             continue  # WE died here: death_v1 argues that play (no duplicates).
                       # Only our own death — death_v1 covers no other victim.
@@ -237,7 +310,7 @@ def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
             minutes.append((m, "good", d_us, d_en, stats))
 
     # Merge consecutive bad minutes: one sustained losing pattern = one decision.
-    decisions: list[Decision] = []
+    candidates: list[TradeCandidate] = []
     i = 0
     while i < len(minutes):
         m, kind, d_us, d_en, stats = minutes[i]
@@ -248,11 +321,85 @@ def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
             d_us += minutes[j][2]
             d_en += minutes[j][3]
             stats = minutes[j][4]  # state at the END of the run (edge of the last interval)
-        facts = _gather_trade_facts(conn, match_id, us_id, our_team, parts, my_duo,
-                                    m, minutes[j][0], kind, d_us, d_en, stats)
-        decisions.append(_evaluate(facts))
+        candidates.append(TradeCandidate(m, minutes[j][0], kind, d_us, d_en, stats))
         i = j + 1
+    return TradeInventory(match_id, us_id, our_team, parts, my_duo, enemy_duo,
+                          frames, candidates)
+
+
+def analyze_trades(conn: sqlite3.Connection, match_id: str) -> list[Decision]:
+    inv = _collect_trade_candidates(conn, match_id)
+    if inv is None:
+        return []
+    decisions: list[Decision] = []
+    for c in inv.candidates:
+        facts = _gather_trade_facts(conn, match_id, inv.us_id, inv.our_team, inv.parts,
+                                    inv.my_duo, c.m_start, c.m_end, c.kind, c.d_us, c.d_en,
+                                    c.stats,
+                                    _resolve_trade_pre(conn, match_id, inv.frames,
+                                                       c.m_start, c.m_end))
+        if facts is not None:
+            decisions.append(_evaluate(facts))
     return decisions
+
+
+@dataclass
+class TradePre:
+    """Diagnostic local resolution; availability guarantees only block opening."""
+    status: str
+    reason: Optional[str] = None
+    state: Optional[WorldState] = None
+    temporal: Optional[dict] = None
+
+
+def _resolve_trade_pre(conn, match_id, frames, m_start, m_end) -> TradePre:
+    opening_index = m_start - 1
+    if not 0 <= opening_index < m_end < len(frames):
+        return TradePre("unavailable", "invalid_window_order")
+    timestamps = [frame.get("timestamp") for frame in frames[opening_index:m_end + 1]]
+    if timestamps[0] is None:
+        return TradePre("unavailable", "missing_opening_timestamp")
+    if (any(type(ts) is not int or ts < 0 for ts in timestamps)
+            or any(a >= b for a, b in zip(timestamps, timestamps[1:]))):
+        return TradePre("unavailable", "invalid_window_order")
+    opening_ms = timestamps[0]
+    participants = {row[0] for row in conn.execute(
+        "SELECT participant_id FROM participants WHERE match_id=?", (match_id,))}
+    rows = conn.execute(
+        "SELECT participant_id, frame_index, timestamp_ms FROM timeline_frames "
+        "WHERE match_id=? AND (frame_index=? OR timestamp_ms=?)",
+        (match_id, opening_index, opening_ms),
+    ).fetchall()
+    if (len(participants) != 10
+            or any(row["frame_index"] != opening_index or row["timestamp_ms"] != opening_ms
+                   or row["participant_id"] not in participants for row in rows)
+            or len({row["participant_id"] for row in rows}) != len(rows)):
+        return TradePre("unavailable", "inconsistent_frame_mapping")
+    if {row["participant_id"] for row in rows} != participants:
+        return TradePre("unavailable", "missing_opening_frame")
+    ws = build_world_state(conn, match_id, opening_ms)
+    if ws.game_time_ms != opening_ms or set(ws.players) != participants:
+        return TradePre("unavailable", "inconsistent_frame_mapping")
+    sources = [player.pos_at_ms for player in ws.players.values()]
+    if any(ts is None for ts in sources):
+        return TradePre("unavailable", "missing_opening_frame")
+    if any(ts > opening_ms for ts in sources):
+        return TradePre("unavailable", "future_pre")
+    if any(ts < opening_ms for ts in sources):
+        return TradePre("unavailable", "stale_pre")
+    return TradePre("available", state=ws, temporal={
+        "contract": "trade_block_open_v1",
+        "anchor_kind": "measured_block_open",
+        "nominal_block_start_ms": opening_index * 60_000,
+        "opening_frame_index": opening_index,
+        "target_ms": opening_ms,
+        "source_frame_ms": opening_ms,
+        "age_ms": 0,
+        "status": "available",
+        "guarantee": "block_start_only",
+        "action_time_ms": None,
+        "action_precedence": "unverified",
+    })
 
 
 @dataclass
@@ -270,17 +417,20 @@ class TradeFacts:
     mana_pct: Optional[float]
     consequence: Optional[str]
     state_features: dict
+    pre_temporal: dict
 
 
 def _gather_trade_facts(conn, match_id, us_id, our_team, parts, my_duo,
-                        m_start, m_end, kind, d_us, d_en, stats) -> TradeFacts:
+                        m_start, m_end, kind, d_us, d_en, stats,
+                        pre: TradePre) -> Optional[TradeFacts]:
     """The I/O layer for one trade run: the lost-trade consequence query and the
     state_features at the run's start.
 
-    `m_start`/`m_end` are FRAME INDICES; the run covers the clock interval
-    [(m_start-1)*60s, m_end*60s]. The decision's timestamp is that interval's
-    START — the clip has to open before the exchange, not after it ended.
+    `m_start`/`m_end` are FRAME INDICES. PRE uses their verified actual opening;
+    the decision retains its nominal minute timestamp for historical identity.
     """
+    if pre.status != "available":
+        return None
     t_ms = (m_start - 1) * 60_000
     positive = kind == "good"
 
@@ -302,13 +452,12 @@ def _gather_trade_facts(conn, match_id, us_id, our_team, parts, my_duo,
                 consequence = f"muerte de {victim['champion_name'] if victim else 'tu duo'} en los 90s siguientes"
                 break
 
-    ws = build_world_state(conn, match_id, t_ms)
-    sf = build_state_features(conn, match_id, ws, us_id, our_team)
+    sf = build_state_features(conn, match_id, pre.state, us_id, our_team)
 
     return TradeFacts(
         match_id=match_id, t_ms=t_ms, m_start=m_start, m_end=m_end, positive=positive,
         d_us=d_us, d_en=d_en, hp_pct=stats["hp_pct"], mana_pct=stats["mana_pct"],
-        consequence=consequence, state_features=sf,
+        consequence=consequence, state_features=sf, pre_temporal=pre.temporal,
     )
 
 
@@ -454,6 +603,7 @@ def _evaluate(facts: TradeFacts) -> Decision:
         # Por que el desgaste puntua lo que puntua: auditable sin releer el codigo.
         "next_play_available": next_play,
         "state_features": facts.state_features,
+        "pre_temporal": facts.pre_temporal,
     }
     context["action"] = build_action(DETECTOR_ID, options, action_ids)
 

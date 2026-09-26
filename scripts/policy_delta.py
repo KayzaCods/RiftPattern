@@ -79,7 +79,7 @@ def build(conn) -> tuple[str, dict]:
         "Pelear el objetivo / poner visión / ignorar. Este es el eje que separa "
         "Master de Challenger (estudio 560k partidas: el combate es plano; la visión "
         "y la conducta forward-looking, no). **Hipótesis, no veredicto** — la referencia es "
-        "Sona-only y su n es chico. Nada de esto se escribe en la DB."
+        "one-trick y su n es chico. Nada de esto se escribe en la DB."
     )
     out.append("")
     n_own = sum(1 for s, _, _ in rows if s == "own")

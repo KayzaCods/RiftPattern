@@ -11,6 +11,8 @@ def _facts(**over) -> TradeFacts:
     base = dict(
         match_id="M", t_ms=540_000, m_start=9, m_end=9, positive=False,
         d_us=600, d_en=100, hp_pct=None, mana_pct=None, consequence=None,
+        pre_temporal={"contract": "trade_block_open_v1", "guarantee": "block_start_only",
+                      "action_time_ms": None, "action_precedence": "unverified"},
         state_features={"power": {}, "info_risk": {}, "wave_tempo": {}, "objectives": {}},
     )
     base.update(over)

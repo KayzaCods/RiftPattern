@@ -110,12 +110,33 @@ def test_existing_icon_symlink_is_rejected_without_following(tmp_path):
     except (NotImplementedError, OSError) as exc:
         pytest.skip(f"symlinks no disponibles en esta plataforma: {exc}")
 
-    with pytest.raises(icons.ChampionIconError, match="enlace"):
+    # The link resolves outside the icon directory, so the containment check
+    # rejects it before the link check is even reached.
+    with pytest.raises(icons.ChampionIconError, match="sale del directorio de iconos"):
         icons.build_icon_manifest(
             ["Sona"], {"Sona": {"id": "Sona", "name": "Sona"}}, "16.14.1", output,
             fetcher=lambda _url: pytest.fail("no debe descargar ni leer el enlace"),
         )
     assert outside.read_bytes() == b"no modificar"
+
+
+def test_existing_icon_symlink_inside_output_is_rejected_without_following(tmp_path):
+    output = tmp_path / "champion"
+    output.mkdir()
+    inside = output / "other.png"
+    inside.write_bytes(b"no modificar")
+    link = output / "Sona.png"
+    try:
+        os.symlink(inside, link)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks no disponibles en esta plataforma: {exc}")
+
+    with pytest.raises(icons.ChampionIconError, match="no puede ser un enlace"):
+        icons.build_icon_manifest(
+            ["Sona"], {"Sona": {"id": "Sona", "name": "Sona"}}, "16.14.1", output,
+            fetcher=lambda _url: pytest.fail("no debe descargar ni leer el enlace"),
+        )
+    assert inside.read_bytes() == b"no modificar"
 
 
 def test_symlinked_output_directory_is_rejected(tmp_path):

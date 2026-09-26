@@ -53,6 +53,49 @@ def test_evaluate_engage_worth_when_team_won_the_local_fight():
     assert d.context["inferred_action_class"] == "engage_worth"
 
 
+# --------------------------------------------- "rindio" habla del RESULTADO
+# `got_value` (una kill/asistencia tuya) cortocircuitaba la comparacion de
+# bajas, asi que una pelea de 1-por-3 se etiquetaba "Engage que rindio". Medido
+# sobre 540 decisiones: 73 (14%) salian perdiendo el intercambio, y el
+# desacuerdo del jugador escalaba con ello (3% -> 17% -> 30%). Sus palabras:
+# "una kill por dos muertes no se me hace que rindio".
+
+def test_personal_kill_does_not_make_a_losing_exchange_worth_it():
+    """El caso que motivo el cambio: matas a uno, mueren tres de los tuyos."""
+    d = _evaluate(_facts(got_value=True, enemy_deaths=1, ally_deaths=3))
+    assert d.context["inferred_action_class"] != "engage_worth"
+    assert not any("rindió" in (o.label or "") for o in d.options)
+
+
+def test_personal_kill_still_counts_on_an_even_exchange():
+    """El empate se conserva: tu aporte (peel/CC) pudo ser lo que lo sostuvo."""
+    d = _evaluate(_facts(got_value=True, enemy_deaths=1, ally_deaths=1))
+    assert d.context["inferred_action_class"] == "engage_worth"
+
+
+def test_personal_kill_counts_when_the_exchange_is_favourable():
+    d = _evaluate(_facts(got_value=True, enemy_deaths=2, ally_deaths=1))
+    assert d.context["inferred_action_class"] == "engage_worth"
+
+
+def test_a_losing_exchange_falls_through_to_the_class_that_describes_it():
+    """No basta con dejar de llamarlo "rindio": tiene que caer en la clase que
+    SI describe lo que paso. Con un aliado caido antes, es support_lost."""
+    d = _evaluate(_facts(got_value=True, enemy_deaths=0, ally_deaths=1,
+                         ally_died_first=True))
+    assert d.context["inferred_action_class"] == "support_lost"
+
+    d2 = _evaluate(_facts(got_value=True, enemy_deaths=1, ally_deaths=2))
+    assert d2.context["inferred_action_class"] == "trade_lost"
+
+
+def test_team_winning_the_fight_never_needs_a_personal_kill():
+    """La otra mitad de la regla sigue viva: si el equipo gana el intercambio,
+    rindio aunque tu no puntuaras (peel, CC, escudo)."""
+    d = _evaluate(_facts(got_value=False, enemy_deaths=3, ally_deaths=1))
+    assert d.context["inferred_action_class"] == "engage_worth"
+
+
 def test_evaluate_support_lost_when_ally_fell_first():
     d = _evaluate(_facts(ally_died_first=True, ally_deaths=1))
     assert d.context["inferred_action_class"] == "support_lost"

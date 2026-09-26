@@ -119,12 +119,58 @@ def test_evaluate_contest_lost_without_setup_forcing_was_the_mistake():
 # --- normal contest: enemy took it and you weren't there ---
 
 def test_evaluate_objective_for_objective_trade():
+    """El eje de PRIORIDAD: tres acciones paralelas, ninguna afirmada. Antes el
+    menu decia "Cambiaste X por Y (lo que hiciste)" y daba por hecho un
+    intercambio que en el 64% de los casos era una torre cayendo por su cuenta.
+    Ahora la contrapartida se OFRECE y se nombra solo como ejemplo."""
     d = _evaluate(_facts(
         ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
              "traded_for": "las larvas"},
         taken_by_us=False))
-    assert _taken_action_id(d) == "ignore_objective"
-    assert "larvas" in d.options[0].label.lower()
+    assert d.options[0].label.startswith("Ir a por ")
+    assert d.options[1].label == "Otra jugada de más valor, como las larvas"
+    assert d.options[2].label == "Ceder y reagrupar"
+    assert _taken_action_id(d) == "roam"          # no estabas en el foso
+    assert not any("(lo que hiciste)" in o.label for o in d.options)
+
+
+def test_the_priority_axis_outranks_being_at_the_pit():
+    """Decision del jugador (14-ago): estar cerca del foso no convierte la jugada
+    en un "contestaste" cuando el equipo se llevo otra cosa. Antes la presencia
+    mandaba y 152 de 214 intercambios detectados nunca llegaban a ofrecerse."""
+    d = _evaluate(_facts(
+        ctx={"taken_by": "enemigo", "at_pit": True, "too_far": False,
+             "traded_for": "el Heraldo", "allies_near_pit": 3},
+        taken_by_us=False))
+    assert d.options[0].label.startswith("Ir a por")
+    assert "Heraldo" in d.options[1].label
+    assert _taken_action_id(d) == "fight_entry"   # estabas en el foso
+
+
+def test_the_priority_axis_ev_comes_from_setup_not_from_the_outcome():
+    """Con setup alto vale mas ir; con setup bajo vale mas la otra jugada. El
+    desenlace (que el objetivo cayo al enemigo) es el mismo en ambos."""
+    bajo = _evaluate(_facts(
+        ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+             "traded_for": "el Barón", "team_wards_near_pit": 0,
+             "vision_diff": 0, "allies_near_pit": 0},
+        taken_by_us=False))
+    alto = _evaluate(_facts(
+        ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+             "traded_for": "el Barón", "team_wards_near_pit": 2,
+             "vision_diff": 2, "allies_near_pit": 4},
+        taken_by_us=False))
+    assert bajo.options[1].ev_score > bajo.options[0].ev_score   # mejor la otra jugada
+    assert alto.options[0].ev_score > alto.options[1].ev_score   # mejor ir a por el
+
+
+def test_without_a_counterpart_the_priority_axis_does_not_appear():
+    """Sin contrapartida no hay pregunta de prioridad que hacer: la decision
+    vuelve a las ramas de contestar/ceder."""
+    d = _evaluate(_facts(
+        ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True},
+        taken_by_us=False))
+    assert not any(o.label.startswith("Ir a por") for o in d.options)
 
 
 def test_evaluate_not_there_low_setup_ceding_was_right():

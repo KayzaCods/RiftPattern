@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .riot_api import RiotAPI
+from .riot_api import RiotAPI, RiotAPIError
 
 
 class AccountRegistry:
@@ -46,14 +46,36 @@ class AccountRegistry:
             encoding="utf-8",
         )
 
-    def resolve_all(self) -> dict[str, str]:
-        """Ensure every configured account has its PUUID cached. Returns dict."""
+    def resolve_all(self, verify: bool = True) -> dict[str, str]:
+        """Ensure every configured account has its PUUID cached. Returns dict.
+
+        Riot cifra los PUUID POR API KEY. Al rotar la key los guardados dejan de
+        ser descifrables y match-v5 responde
+        `400 Bad Request - Exception decrypting <puuid>`. La version anterior
+        solo llamaba a la API `if key not in self._by_riot_id`, asi que el cache
+        sobrevivia JUSTO al evento que lo invalida: 9 dias de ingesta parada en
+        silencio (14-ago), con el banner diciendo que la key estaba viva.
+
+        Re-resolver cuesta una llamada por cuenta y corrida —dos en total, con
+        un limite de 20/s—, asi que el cache no valia ese riesgo. Se conserva
+        como respaldo: si la llamada falla, nos quedamos con el ultimo valor
+        conocido para que un run sin red o con rate-limit no se quede sin PUUID.
+        """
         changed = False
         for acc in self.accounts:
             key = self.riot_id_of(acc["game_name"], acc["tag_line"])
-            if key not in self._by_riot_id:
+            cached = self._by_riot_id.get(key)
+            if cached and not verify:
+                continue
+            try:
                 resp = self.api.account_by_riot_id(acc["game_name"], acc["tag_line"])
-                self._by_riot_id[key] = resp["puuid"]
+            except RiotAPIError:
+                if cached:
+                    continue          # respaldo: seguimos con el ultimo conocido
+                raise
+            fresh = resp["puuid"]
+            if fresh != cached:
+                self._by_riot_id[key] = fresh
                 changed = True
         if changed:
             self._save_cache()

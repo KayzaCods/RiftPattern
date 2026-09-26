@@ -11,8 +11,8 @@ all run normally. The reference player is NOT added to config.toml, so the autom
 ingest never touches their account.
 
 Usage:
-    .venv\\Scripts\\python.exe scripts\\ingest_reference.py "REFERENCIA#tag" --champion Sona
-    .venv\\Scripts\\python.exe scripts\\ingest_reference.py "REFERENCIA#tag" --cohort challenger --champion Sona --keep 20 --queue 420
+    .venv\\Scripts\\python.exe scripts\\ingest_reference.py "REFERENCIA#tag" --champion <Campeon>
+    .venv\\Scripts\\python.exe scripts\\ingest_reference.py "REFERENCIA#tag" --cohort challenger --champion <Campeon> --keep 20 --queue 420
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Ingest a reference player's matches as a cohort.")
     ap.add_argument("riot_id", help='GameName#TagLine, e.g. "REFERENCIA#tag"')
     ap.add_argument("--cohort", default="challenger", help="cohort tag for these matches (default: challenger)")
-    ap.add_argument("--champion", default=None, help="only keep games on this champion, e.g. Sona")
+    ap.add_argument("--champion", default=None, help="only keep games on this champion")
     ap.add_argument("--keep", type=int, default=20, help="how many matching games to ingest (default: 20)")
     ap.add_argument("--queue", type=int, default=420, help="queue id, 420=ranked solo (default); ignored with --all-queues")
     ap.add_argument("--all-queues", action="store_true", help="don't filter by queue")

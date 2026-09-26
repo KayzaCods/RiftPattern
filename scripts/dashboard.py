@@ -5,8 +5,8 @@ context + options + EV + argument for each detected decision, watch the linked
 clip, and mark feedback (agree / disagree / missing_context) that persists back
 to the DB so the EV criteria can be refined over time.
 
-Run:  python scripts/dashboard.py  [--port 8765] [--no-browser]
-Then open http://127.0.0.1:8765 (opened automatically by default).
+Run:  python scripts/dashboard.py  [--port 8766] [--no-browser]
+Then open http://127.0.0.1:8766 (opened automatically by default).
 
 stdlib only. The frontend lives in dashboard.html next to this file.
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import math
 import mimetypes
@@ -108,6 +109,9 @@ def query_ingest_status(conn, status_path: Path | None = None) -> dict:
         "key_alive": st.get("key_alive"),   # None = unknown (sin status file)
         "last_run": st.get("last_run"),
         "error": st.get("error"),
+        "state": st.get("state"),  # None for legacy files: pipeline outcome unknown
+        "ingested": st.get("ingested"),
+        "errors": st.get("errors", []),
         "last_ingested_utc": last,
         "days_since_ingest": days,
     }
@@ -119,6 +123,17 @@ HTML_PATH = HERE / "dashboard.html"
 # Raiz de contencion de /assets/: nada fuera de aqui se sirve.
 ASSETS_ROOT = (HERE / "assets").resolve()
 DDRAGON_VERSION = "16.14.1"
+
+# Geometria del recorte del minimapa, en fracciones del frame (0..1) y POR
+# GRABADOR. Es geometria, no dato del jugador: se versiona como el resto de
+# artefactos de data/ que no son la DB ni raw/. Lo escribe la vista de
+# calibracion; no hay valor por defecto razonable porque la posicion y la escala
+# del minimapa dependen de la configuracion del cliente y de la resolucion de
+# grabacion, ninguna de las dos observable desde el repositorio.
+MINIMAP_CROP_PATH = HERE.parent / "data" / "minimap_crop.json"
+# Una fuente es un identificador de grabador, nunca un fragmento de ruta: se
+# usa como CLAVE de un fichero versionado y viene de un POST.
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
 # Every decision encodes exactly one option as the one the player actually took.
 # Quien la localiza es `features.taken_index` (campo `taken` explicito, con
@@ -260,10 +275,16 @@ SELECT d.id, d.match_id, d.detector_id, d.game_time_ms, d.moment, d.outcome,
        d.user_feedback, d.user_feedback_note, d.user_best_option, d.user_mark_type,
        d.user_feedback_fingerprint, d.user_feedback_at_utc, d.created_at_utc,
        m.our_cohort AS cohort, m.game_start_ms,
-       p.champion_name AS champion, p.team_position AS role
+       p.champion_name AS champion, p.team_position AS role,
+       cl.source AS clip_source
 FROM decisions d
 JOIN matches m ON m.match_id = d.match_id
 LEFT JOIN participants p ON p.match_id = d.match_id AND p.puuid = m.our_puuid
+-- Grabador del que sale el clip (ascent_full / replays_lol_full / ...). La tira
+-- de minimapa recorta por FUENTE, no global: son grabadores distintos y pueden
+-- diferir en resolucion o escala de HUD. `clips.path` es PRIMARY KEY, asi que
+-- este LEFT JOIN no puede multiplicar filas.
+LEFT JOIN clips cl ON cl.path = d.clip_path
 {where}
 ORDER BY m.game_start_ms DESC, d.game_time_ms ASC
 """
@@ -380,6 +401,10 @@ def enrich(row: sqlite3.Row, notes_map: dict | None = None) -> dict:
         "argument": row["argument"] or "",
         "has_clip": bool(row["clip_path"]),
         "clip_offset_s": row["clip_offset_s"],
+        # Grabador de origen: la tira de minimapa necesita saber con que geometria
+        # recortar. None si la decision no tiene clip, o si su clip_path ya no
+        # figura en `clips` (entonces la tira no se dibuja, que es lo correcto).
+        "clip_source": row["clip_source"],
         "reward_score": (ctx.get("reward") or {}).get("reward_score"),
         "power_index": pidx,
         "power_label": power_label(pidx),
@@ -397,7 +422,7 @@ def enrich(row: sqlite3.Row, notes_map: dict | None = None) -> dict:
     }
 
 
-# Cohorts of REFERENCE players (e.g. the challenger Sona one-trick). Their matches
+# Cohorts of REFERENCE players (e.g. a challenger one-trick). Their matches
 # are for comparison only: aggregates (stats, patterns) must never mix them with the
 # user's own play unless that cohort is selected explicitly.
 REFERENCE_COHORTS = ("challenger",)
@@ -1159,7 +1184,55 @@ def query_review_queue(conn) -> dict:
         })
     items.sort(key=lambda x: (x["agree"], x["detector"], x["date"]))
     return {"items": items, "n": len(items),
-            "n_disagree": sum(1 for x in items if not x["agree"])}
+            "n_disagree": sum(1 for x in items if not x["agree"]),
+            "stale": query_stale_marks(conn)}
+
+
+def query_stale_marks(conn) -> list:
+    """Marcas que dejaron de contar porque el conjunto de opciones cambio bajo
+    ellas (re-analisis, arreglo de detector). Se conservan con su nota, pero no
+    entrenan al learner y hasta ahora NO aparecian en ninguna vista: la unica
+    forma de encontrarlas era pedir el match_id por consola, que el dashboard ni
+    siquiera muestra. Es trabajo pendiente y tiene que verse para no acumularse.
+
+    Se excluyen las `equivalent` y las que no entrenarian igualmente por tipo:
+    rehacerlas no recuperaria nada.
+    """
+    out = []
+    for r in conn.execute(
+        "SELECT d.id, d.match_id, d.detector_id, d.game_time_ms, d.moment, "
+        "d.context_json, d.options_json, d.user_feedback, d.user_feedback_note, "
+        "d.user_best_option, d.user_feedback_at_utc, d.created_at_utc, "
+        "d.user_feedback_fingerprint, d.user_mark_type, "
+        "m.game_start_ms, m.our_cohort AS cohort, p.champion_name AS champion "
+        "FROM decisions d JOIN matches m ON m.match_id = d.match_id "
+        "LEFT JOIN participants p ON p.match_id = d.match_id AND p.puuid = m.our_puuid "
+        "WHERE d.user_best_option IS NOT NULL AND " + _own_cohort_sql("m.our_cohort")
+    ):
+        note = (r["user_feedback_note"] or "").strip()
+        if r["user_feedback"] == "equivalent":
+            continue
+        if not feedback.trains_learner(r["user_mark_type"], note, _NOISE_NOTE):
+            continue
+        ctx = json.loads(r["context_json"])
+        hm = _historical_mark(r, ctx)
+        if not hm:
+            continue                      # sigue vigente: no es trabajo pendiente
+        out.append({
+            "id": r["id"], "match": r["match_id"], "detector": r["detector_id"],
+            "cohort": r["cohort"], "champion": r["champion"] or "—",
+            "date": fmt_date(r["game_start_ms"]),
+            "time": ctx.get("time_mmss") or mmss(r["game_time_ms"]),
+            "moment": r["moment"] or "",
+            "reason": hm["reason"],
+            "marked_at": hm["marked_at"],
+            "feedback": hm["feedback"],
+            "chosen_label": hm["chosen_action_label"],
+            "note": note[:200],
+        })
+    # Lo mas reciente primero: son las que mejor recuerda el jugador.
+    out.sort(key=lambda x: (x["marked_at"] or ""), reverse=True)
+    return out
 
 
 def query_player_model(conn) -> dict:
@@ -1635,7 +1708,7 @@ def query_exposure(conn, cohort=None) -> dict:
 
     # Segmenta POR MATCH (los episodios son frames consecutivos dentro de una
     # partida) y agrega/lista sobre EPISODIOS, no frames: contar frames infla el
-    # N por autocorrelacion y falsea cualquier cota de FP (scout 2026-07-19).
+    # N por autocorrelacion y falsea cualquier cota de FP.
     episodes = []
     for mid in meta:
         episodes.extend(exposure.segment_episodes(exposure.scan_match(conn, mid)))
@@ -1718,6 +1791,210 @@ def set_anchor(conn, decision_id: int, label) -> dict:
     return {"ok": True, "key": key, "label": label}
 
 
+# ----------------------------------------- validacion del proxy de vision (D)
+# El proxy de `objective_readiness_v1` cuenta una ward como "cerca del pit"
+# mirando donde estaba QUIEN la puso, en el frame mas cercano. Los frames son por
+# minuto: esa posicion puede tener hasta 60 s de retraso. De ahi sale el "70% de
+# objetivos sin ward propia cerca del pit", y hasta ahora no se sabia si era un
+# habito real o un artefacto. La tira de minimapa deja mirarlo.
+VISION_LABELS = ("near", "far", "unreadable")
+# Fijos y versionados: la muestra tiene que ser reproducible y no puede
+# reordenarse al re-analizar. Se deriva por hash de la clave ESTABLE.
+VISION_SAMPLE_SEED = "riftpattern-vision-proxy-v1"
+VISION_SAMPLE_N = 100
+# Instantes de la tira en objetivo. Solo se puede verificar una
+# ward si cae ENTRE dos frames: apareciendo en el segundo y ausente en el
+# primero. Una ward posterior a -15 s no tiene frame despues que la muestre.
+VISION_INTERVALS = ((-90, -45), (-45, -15))
+_VISION_WINDOW_MS = 90_000
+# El radio con el que el detector decide "cerca del pit", y el lado del mapa.
+# Se sirven al frontend para dibujar el circulo a escala: son 3500 de 15000, o
+# sea el 23% del ancho. Juzgarlo a ojo sin verlo produce cortes distintos en
+# cada caso, y entonces la proporcion medida no significa nada.
+VISION_NEAR_PIT_UNITS = 3500
+MAP_MAX_UNITS = 15000
+
+
+def _allied_wards_in_window(conn, match_id, us_id, our_team, kill_ms):
+    """Wards ALIADAS puestas en los 90 s previos, como (offset_s, creator_id).
+
+    El autor vive en el payload: `timeline_events.participant_id` esta NULL en
+    los 43.661 WARD_PLACED de la base. Filtrar por esa columna no casa nunca.
+    """
+    out = []
+    for r in conn.execute(
+        "SELECT timestamp_ms, payload_json FROM timeline_events WHERE match_id=? "
+        "AND type='WARD_PLACED' AND timestamp_ms BETWEEN ? AND ?",
+        (match_id, kill_ms - _VISION_WINDOW_MS, kill_ms),
+    ):
+        ev = json.loads(r["payload_json"])
+        if ev.get("wardType") == "UNDEFINED":      # invariante 8: no es una ward
+            continue
+        cid = ev.get("creatorId")
+        if cid is None or _PARTICIPANT_TEAM.get((match_id, cid)) != our_team:
+            continue
+        out.append(((r["timestamp_ms"] - kill_ms) / 1000.0, cid))
+    return out
+
+
+_PARTICIPANT_TEAM: dict = {}
+
+
+def _load_participant_teams(conn):
+    _PARTICIPANT_TEAM.clear()
+    for r in conn.execute("SELECT match_id, participant_id, team_id FROM participants"):
+        _PARTICIPANT_TEAM[(r["match_id"], r["participant_id"])] = r["team_id"]
+
+
+def vision_proxy_frame(conn) -> list:
+    """Objetivos donde el proxy PUEDE estar equivocado y el video puede decidirlo.
+
+    Tres filtros, en orden, y cada uno tiene motivo:
+      1. `your_wards_near_pit == 0` — el caso que la afirmacion describe.
+      2. pusiste >=1 ward en la ventana — si no pusiste ninguna, el cero es
+         correcto POR CONSTRUCCION y no hay nada que verificar en el video.
+      3. alguna de tus wards cae en un intervalo entre frames donde NINGUN
+         aliado warde — si no, el icono nuevo no se te puede atribuir.
+    """
+    _load_participant_teams(conn)
+    us = {}
+    for r in conn.execute(
+        "SELECT p.match_id, p.participant_id, p.team_id FROM participants p "
+        "JOIN matches m ON m.match_id = p.match_id AND m.our_puuid = p.puuid"
+    ):
+        us[r["match_id"]] = (r["participant_id"], r["team_id"])
+
+    where = ("WHERE d.detector_id = 'objective_readiness_v1' AND "
+             + _own_cohort_sql("m.our_cohort"))
+    out = []
+    for r in conn.execute(SQL_DEC.format(where=where)):
+        if not r["clip_path"] or (r["clip_offset_s"] or 0) < 90:
+            continue
+        ctx = json.loads(r["context_json"])
+        if ctx.get("your_wards_near_pit") != 0:
+            continue
+        mid = r["match_id"]
+        if mid not in us:
+            continue
+        us_id, our_team = us[mid]
+        wards = _allied_wards_in_window(conn, mid, us_id, our_team, r["game_time_ms"])
+        mine = sorted(t for t, cid in wards if cid == us_id)
+        if not mine:
+            continue                      # cero correcto por construccion
+        # Posicion del pit, para poder DIBUJAR el radio de 3500 u en vez de
+        # pedirle al usuario que juzgue a ojo que es "cerca": 3500 u sobre un
+        # mapa de 15000 son casi una cuarta parte del ancho, mucho mas de lo que
+        # se entiende por "en el pit". Sin el circulo, cada quien pone el corte
+        # donde quiere y la medicion no significa lo mismo caso a caso.
+        pit = conn.execute(
+            "SELECT payload_json FROM timeline_events WHERE match_id=? "
+            "AND type='ELITE_MONSTER_KILL' AND timestamp_ms=? LIMIT 1",
+            (mid, r["game_time_ms"])).fetchone()
+        pit_pos = (json.loads(pit["payload_json"]).get("position") or {}) if pit else {}
+        for lo, hi in VISION_INTERVALS:
+            en_rango = [t for t in mine if lo <= t < hi]
+            if not en_rango:
+                continue
+            if any(cid != us_id and lo <= t < hi for t, cid in wards):
+                continue                  # un aliado warde en el mismo hueco
+            out.append({
+                "id": r["id"],
+                "key": f"{mid}|{r['detector_id']}|{r['game_time_ms']}",
+                "interval": [lo, hi],
+                "your_ward_offsets_s": [round(t, 1) for t in en_rango],
+                "n_your_wards_in_window": len(mine),
+                "pit_x": pit_pos.get("x"),
+                "pit_y": pit_pos.get("y"),
+                "near_pit_units": VISION_NEAR_PIT_UNITS,
+                "map_max_units": MAP_MAX_UNITS,
+            })
+            break
+    return out
+
+
+def _vision_order(key: str) -> str:
+    """Orden aleatorio pero FIJO y reproducible, derivado de la clave estable."""
+    return hashlib.sha256(f"{VISION_SAMPLE_SEED}|{key}".encode()).hexdigest()
+
+
+def ensure_vision_sample(conn, limit: int = VISION_SAMPLE_N) -> int:
+    """Congela la muestra la PRIMERA vez y nunca la recalcula.
+
+    El marco crece con cada partida ingerida (195 -> 216 al ponerse la ingesta al
+    dia). Si la muestra se recalculara, casos nuevos entrarian y otros saldrian
+    mientras se etiqueta: el denominador se moveria y el intervalo final no
+    significaria nada. Re-muestrear es un acto deliberado:
+    `DELETE FROM vision_sample`.
+    """
+    ya = conn.execute("SELECT COUNT(*) c FROM vision_sample").fetchone()["c"]
+    if ya:
+        return ya
+    frame = vision_proxy_frame(conn)
+    frame.sort(key=lambda x: _vision_order(x["key"]))
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.executemany(
+        "INSERT OR IGNORE INTO vision_sample (decision_key, position, frozen_at_utc) "
+        "VALUES (?,?,?)",
+        [(x["key"], i, ts) for i, x in enumerate(frame[:limit])])
+    conn.commit()
+    return min(len(frame), limit)
+
+
+def query_vision_study(conn, limit: int = VISION_SAMPLE_N) -> dict:
+    ensure_vision_sample(conn, limit)
+    orden = {r["decision_key"]: r["position"]
+             for r in conn.execute("SELECT decision_key, position FROM vision_sample")}
+    labels = {r["decision_key"]: r["label"]
+              for r in conn.execute("SELECT decision_key, label FROM vision_proxy_labels")}
+    # El marco se recalcula solo para recuperar el intervalo y los segundos de
+    # las wards; QUIEN esta en la tanda ya no depende de el.
+    frame = {x["key"]: x for x in vision_proxy_frame(conn)}
+    muestra = [frame[k] for k in orden if k in frame]
+    muestra.sort(key=lambda x: orden[x["key"]])
+    ids = {x["id"] for x in muestra}
+    nmap = _notes_map(conn)
+    enriched = {}
+    if ids:
+        marcas = ",".join(str(i) for i in sorted(ids))
+        for r in conn.execute(SQL_DEC.format(where=f"WHERE d.id IN ({marcas})")):
+            enriched[r["id"]] = enrich(r, nmap)
+    items = []
+    for x in muestra:
+        d = enriched.get(x["id"])
+        if not d:
+            continue
+        d.update({k: x[k] for k in
+                  ("key", "interval", "your_ward_offsets_s", "n_your_wards_in_window",
+                   "pit_x", "pit_y", "near_pit_units", "map_max_units")})
+        d["vision_label"] = labels.get(x["key"])
+        items.append(d)
+    # Un caso congelado que ya no se puede resolver NO se descarta en silencio:
+    # es una baja de la muestra y el denominador tiene que saberlo.
+    caidos = len(orden) - len(items)
+    n_marked = sum(1 for d in items if d["vision_label"])
+    return {"moments": items, "total": len(items), "frozen": len(orden),
+            "dropped": caidos, "frame_total": len(frame),
+            "n_marked": n_marked, "seed": VISION_SAMPLE_SEED}
+
+
+def set_vision_label(conn, decision_id: int, label) -> dict:
+    key = _decision_key(conn, decision_id)
+    if not key:
+        return {"error": "decision no encontrada"}
+    if label is None:
+        conn.execute("DELETE FROM vision_proxy_labels WHERE decision_key = ?", (key,))
+    elif label in VISION_LABELS:
+        conn.execute(
+            "INSERT INTO vision_proxy_labels (decision_key, label, marked_at_utc) "
+            "VALUES (?,?,?) ON CONFLICT(decision_key) DO UPDATE SET "
+            "label=excluded.label, marked_at_utc=excluded.marked_at_utc",
+            (key, label, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    else:
+        return {"error": f"label invalida: {label}"}
+    conn.commit()
+    return {"ok": True, "key": key, "label": label}
+
+
 def set_feedback(conn, decision_id: int, payload: dict) -> dict:
     """Partial update of a decision's feedback. Only fields present in the
     payload are written, so saving a written note / chosen option does not clear
@@ -1791,6 +2068,117 @@ def replay_for(conn, match_id):
     if not p.exists():
         return None
     return p, float(r["in_match_start_s"] or 0)
+
+
+# --------------------------------------------------- recorte del minimapa (D)
+def clip_sources(conn) -> list:
+    """Grabadores presentes en la DB. La vista de calibracion los lee de aqui y
+    no de una lista fija: asi un grabador nuevo aparece solo en vez de quedarse
+    mudo hasta que alguien recuerde anadirlo al frontend."""
+    return [r["source"] for r in conn.execute(
+        "SELECT DISTINCT source FROM clips WHERE source IS NOT NULL AND source <> '' "
+        "ORDER BY source")]
+
+
+def clip_source_samples(conn, crop_path=None) -> list:
+    """Por grabador: cuantas decisiones tiene y contra que decision calibrar.
+
+    La muestra es la MEDIANA del `clip_offset_s` de esa fuente, no un extremo.
+    En el minuto 2 el minimapa esta casi vacio y el borde se adivina mal; en el
+    ultimo minuto la pantalla de fin de partida puede taparlo entero (la muestra
+    mas tardia de `ascent_full` cae a 2543 s de una partida de 2574 s). A mitad
+    de partida hay niebla, wards e iconos, que es justo lo que hay que encuadrar.
+    """
+    calibrado = load_minimap_crop(crop_path)
+    out = []
+    for source in clip_sources(conn):
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM decisions d JOIN clips cl ON cl.path = d.clip_path "
+            "WHERE cl.source = ? AND d.clip_path IS NOT NULL AND d.clip_path <> '' "
+            "AND d.clip_offset_s IS NOT NULL",
+            (source,),
+        ).fetchone()["n"]
+        r = conn.execute(
+            "SELECT d.id, d.clip_offset_s, ? AS n FROM decisions d "
+            "JOIN clips cl ON cl.path = d.clip_path "
+            "WHERE cl.source = ? AND d.clip_path IS NOT NULL AND d.clip_path <> '' "
+            "AND d.clip_offset_s IS NOT NULL "
+            "ORDER BY d.clip_offset_s LIMIT 1 OFFSET ?",
+            (n, source, n // 2),
+        ).fetchone() if n else None
+        out.append({
+            "source": source,
+            "decisions": r["n"] if r else 0,
+            "sample_id": r["id"] if r else None,
+            "sample_offset_s": r["clip_offset_s"] if r else None,
+            "calibrated": source in calibrado,
+        })
+    return out
+
+
+def _valid_rect(rect):
+    """El recorte como cuatro fracciones dentro del frame, redondeadas, o None.
+
+    Rechaza `w`/`h` en cero a proposito: los ceros del fichero de ejemplo
+    son el estado "sin calibrar", no un valor. Servirlos como
+    recorte dibujaria un rectangulo vacio en lugar de avisar, que es justo el
+    fallo silencioso que la calibracion por fuente existe para evitar.
+    """
+    if not isinstance(rect, dict):
+        return None
+    out = {}
+    for k in ("x", "y", "w", "h"):
+        v = rect.get(k)
+        # bool es subclase de int: sin este guard un `true` entraria como 1.0.
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out[k] = float(v)
+    if out["w"] <= 0 or out["h"] <= 0 or out["x"] < 0 or out["y"] < 0:
+        return None
+    if out["x"] + out["w"] > 1 or out["y"] + out["h"] > 1:
+        return None
+    return {k: round(v, 6) for k, v in out.items()}
+
+
+def load_minimap_crop(path=None) -> dict:
+    """Recortes CALIBRADOS por fuente. Fichero ausente, corrupto o con entradas
+    invalidas equivale a "sin calibrar" para esas fuentes: nunca se adivina una
+    geometria, porque un recorte adivinado falla en silencio."""
+    p = Path(path or MINIMAP_CROP_PATH)
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for source, rect in raw.items():
+        if not isinstance(source, str) or not _SOURCE_RE.match(source):
+            continue
+        ok = _valid_rect(rect)
+        if ok is not None:
+            out[source] = ok
+    return out
+
+
+def save_minimap_crop(conn, source, rect, path=None) -> dict:
+    """Persiste el recorte de UNA fuente y devuelve el estado completo."""
+    if not isinstance(source, str) or not _SOURCE_RE.match(source):
+        raise ValueError(f"fuente invalida: {source!r}")
+    if source not in clip_sources(conn):
+        raise ValueError(f"fuente desconocida: {source!r}")
+    ok = _valid_rect(rect)
+    if ok is None:
+        raise ValueError(f"recorte invalido: {rect!r}")
+    p = Path(path or MINIMAP_CROP_PATH)
+    data = load_minimap_crop(p)
+    data[source] = ok
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Escritura atomica: es un fichero versionado y no puede quedar a medias.
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(p)
+    return {"ok": True, "crop": data}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1982,6 +2370,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(_exposure_cached(conn, qs.get("cohort", [None])[0]))
                 elif u.path == "/api/anchor_set":
                     self._json(query_anchor_set(conn))
+                elif u.path == "/api/minimap_crop":
+                    self._json({"crop": load_minimap_crop(),
+                                "sources": clip_source_samples(conn)})
+                elif u.path == "/api/vision_study":
+                    self._json(query_vision_study(conn))
                 else:
                     self._json({"error": "not found"}, 404)
             except Exception as exc:  # surface errors as JSON instead of a blank 500
@@ -2011,6 +2404,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(apply_weights(conn))
             elif u.path == "/api/weights/reset":
                 self._json(reset_weights(conn))
+            elif u.path == "/api/minimap_crop":
+                self._json(save_minimap_crop(conn, payload.get("source"),
+                                             payload.get("rect")))
+            elif u.path == "/api/vision_label":
+                self._json(set_vision_label(conn, int(payload["id"]), payload.get("label")))
             else:
                 self._json({"error": "not found"}, 404)
             _invalidate_decisions_cache()   # any write can change the decisions list
@@ -2024,7 +2422,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="lol-coach dashboard")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
 

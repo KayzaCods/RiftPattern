@@ -159,8 +159,12 @@ def _ingest_match_from_riot(conn, api, accounts, raw_dir: Path, qid: str) -> str
 
 def ingest_ascent(conn, ascent_db: Path, ascent_dir, api, accounts, raw_dir: Path) -> dict:
     s = {"recordings": 0, "linked": 0, "unlinked": 0, "missing_file": 0,
-         "matches_pulled": 0, "inserted": 0, "relinked": 0, "skipped": 0}
+         "matches_pulled": 0, "inserted": 0, "relinked": 0, "skipped": 0,
+         # Los fallos de Riot solo iban a log.warning y no llegaban al resumen:
+         # nueve dias de ingesta rota se veian como "traidas de Riot=0" (14-ago).
+         "riot_errors": 0, "riot_error_sample": None, "source_error": None}
     if not ascent_db.exists():
+        s["source_error"] = "ascent_db_missing"
         print(f"  Ascent DB no encontrada: {ascent_db}")
         return s
 
@@ -169,6 +173,7 @@ def ingest_ascent(conn, ascent_db: Path, ascent_dir, api, accounts, raw_dir: Pat
         try:
             rows = adb.execute("SELECT * FROM recordings").fetchall()
         except sqlite3.OperationalError as e:
+            s["source_error"] = "recordings_unreadable"
             print(f"  No pude leer la tabla 'recordings': {e}")
             return s
         for r in rows:
@@ -188,6 +193,9 @@ def ingest_ascent(conn, ascent_db: Path, ascent_dir, api, accounts, raw_dir: Pat
                             s["matches_pulled"] += 1
                     except RiotAPIError as e:
                         log.warning("Riot API falló para %s: %s", qid, e)
+                        s["riot_errors"] += 1
+                        if s["riot_error_sample"] is None:
+                            s["riot_error_sample"] = str(e)[:180]
 
             if match_id:
                 s["linked"] += 1

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import sys
 import time
 from contextlib import redirect_stdout
@@ -37,26 +36,36 @@ LOG_MAX_BYTES = 512 * 1024  # keep the log small; trim oldest when it grows past
 
 
 def _key_alive(cfg) -> "bool | None":
-    """True/False whether the Riot key can read match-v5; None if undeterminable.
+    """True/False whether the Riot key can do what ingestion needs; None if
+    undeterminable.
 
-    Tests the exact capability ingestion needs (a match-v5 read) against a match
-    already in the DB. If the DB has no match yet, we cannot test -> None.
+    OJO — esto fallo el 14-ago y hay que entender por que. La version anterior
+    probaba match-v5 contra un `match_id` ya guardado, que es una llamada SIN
+    PUUID: exactamente la unica capacidad que sobrevive a una rotacion de key.
+    Devolvia 200 y escribia `key_alive: true` mientras la ingesta llevaba 9 dias
+    sin traer nada, porque lo que se habia roto era la lectura POR PUUID (los
+    PUUID guardados quedan indescifrables al rotar la key).
+
+    Ahora se prueba `matches/by-puuid/.../ids`, que es la llamada de la que
+    depende traer partidas nuevas. Se usa el PUUID CACHEADO a proposito: es el
+    que la ingesta va a usar, asi que si esta caducado tiene que salir aqui.
     """
     riot = cfg.get("riot", {})
     key = riot.get("api_key")
     routing = riot.get("routing", "americas")
     if not key:
         return False
-    import sqlite3
+    puuid = None
     try:
-        db = sqlite3.connect(cfg["paths"]["sqlite_db"])
-        row = db.execute("SELECT match_id FROM matches LIMIT 1").fetchone()
-        db.close()
-    except Exception:
-        row = None
-    if not row:
-        return None
-    url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/{row[0]}"
+        cache = json.loads(
+            (DATA / "puuids.json").read_text(encoding="utf-8"))
+        puuid = next(iter(cache.values()), None)
+    except (OSError, ValueError, StopIteration):
+        puuid = None
+    if not puuid:
+        return None      # sin PUUID cacheado no hay nada que probar todavia
+    url = (f"https://{routing}.api.riotgames.com/lol/match/v5/matches/"
+           f"by-puuid/{puuid}/ids?start=0&count=1")
     # Use requests, like the rest of the pipeline: the Riot API rejects the
     # default Python-urllib User-Agent with 403, so urllib gives false negatives.
     # Retry on 401/403 in case it's a transient throttle before declaring dead.
@@ -65,11 +74,18 @@ def _key_alive(cfg) -> "bool | None":
             code = requests.get(url, headers={"X-Riot-Token": key}, timeout=10).status_code
         except Exception:
             return None
-        if code not in (401, 403):
-            return True  # 200 ok; 429/5xx -> key valid, just throttled/down
-        if attempt < 2:
-            time.sleep(2)
-    return False  # 401/403 persisted across retries -> really expired/invalid
+        # 400 = "Exception decrypting <puuid>": la key vale, pero el PUUID
+        # cacheado es de otra epoca y la ingesta NO puede traer partidas. Antes
+        # caia en el `not in (401, 403)` y se reportaba como viva; ese fue el
+        # fallo del 14-ago. Cuenta como muerta porque, para lo que aqui importa,
+        # lo esta: no entra ni una partida.
+        if code in (401, 403, 400):
+            if attempt < 2:
+                time.sleep(2)
+                continue
+            return False
+        return True  # 200 ok; 429/5xx -> key valida, solo throttled/caida
+    return False
 
 
 def _trim_log() -> None:
@@ -84,8 +100,28 @@ def _trim_log() -> None:
 BACKUP_KEEP = 7  # daily backups retained
 
 
+def _is_daily_backup(path) -> bool:
+    """True solo para `lol_coach_YYYYMMDD.db` (la familia que rota por dia).
+
+    Los `lol_coach_pre*.db` son puntos de control manuales escritos antes de
+    trabajo riesgoso (migraciones, regeneraciones). Entraban a la ventana de
+    rotacion porque el glob era `lol_coach_*.db` y ordenan despues de las
+    fechas, asi que cada copia manual acortaba la historia diaria.
+    """
+    name = path.name
+    stem, suffix = "lol_coach_", ".db"
+    if not (name.startswith(stem) and name.endswith(suffix)):
+        return False
+    stamp = name[len(stem):-len(suffix)]
+    return len(stamp) == 8 and stamp.isdigit()
+
+
 def _daily_db_backup(cfg) -> str | None:
     """One consistent DB backup per day in data/backups/, keeping the last 7.
+
+    Solo rotan los archivos DIARIOS (`lol_coach_YYYYMMDD.db`); los puntos de
+    control manuales (`lol_coach_pre*.db`, `lol_coach.db.pre22-*.db`) no se
+    tocan nunca.
 
     Uses sqlite's online backup API (WAL-safe), so it's valid even while the
     dashboard or an analysis is writing. Runs regardless of Riot key state —
@@ -107,55 +143,61 @@ def _daily_db_backup(cfg) -> str | None:
         dst.close()
     finally:
         src.close()
-    backups = sorted(bdir.glob("lol_coach_*.db"))
-    for old in backups[:-BACKUP_KEEP]:
+    daily = sorted(p for p in bdir.glob("lol_coach_*.db") if _is_daily_backup(p))
+    for old in daily[:-BACKUP_KEEP]:
         old.unlink(missing_ok=True)
     return str(dest)
 
 
 def main() -> int:
+    """Persist the run outcome; return 0 for the existing timer contract.
+
+    Pipeline failures are reported by ``state``/``error`` in the status file.
+    ``key_alive`` remains the independent precheck result, not a diagnosis of
+    subsequent stage failures. Raw exception text is never copied to status.
+    """
     DATA.mkdir(exist_ok=True)
     _trim_log()
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cfg = load_config()
-    alive = _key_alive(cfg)
-    status = {"last_run": ts, "key_alive": alive, "ingested": 0, "error": None}
+    status = {"last_run": ts, "key_alive": None, "ingested": 0,
+              "error": "ingestion_failed", "state": "failed", "errors": []}
 
     with LOG.open("a", encoding="utf-8") as f:
         f.write(f"\n===== {ts} =====\n")
-        try:
-            bpath = _daily_db_backup(cfg)
-            if bpath:
-                f.write(f"backup diario de la DB: {bpath}\n")
-        except Exception as e:
-            f.write(f"BACKUP FALLO: {e!r}\n")
-        if alive is False:
-            msg = ("API KEY EXPIRADA/INVALIDA (HTTP 401/403). Renueva en "
-                   "https://developer.riotgames.com y pegala en config.toml "
-                   "[riot] api_key. La ingesta de partidas nuevas no correra "
-                   "hasta entonces.")
-            f.write(msg + "\n")
-            status["error"] = "api_key_expired"
-            STATUS.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
-            return 0
-
         buf = io.StringIO()
-        old_argv = sys.argv
+        stage = "config"
         try:
-            import sync_ascent
-            sys.argv = ["sync_ascent.py"]  # only-new (no --all)
-            with redirect_stdout(buf):
-                sync_ascent.main()
-            out = buf.getvalue()
-            f.write(out)
-            m = re.search(r"LISTO\. (\d+) partida", out)
-            status["ingested"] = int(m.group(1)) if m else 0
-        except Exception as e:  # never let the timer task crash; record it
-            f.write(buf.getvalue())
-            f.write(f"ERROR: {e!r}\n")
-            status["error"] = str(e)
+            cfg = load_config()
+            stage = "precheck"
+            alive = _key_alive(cfg)
+            status["key_alive"] = alive
+            try:
+                bpath = _daily_db_backup(cfg)
+                if bpath:
+                    f.write(f"backup diario de la DB: {bpath}\n")
+            except Exception as e:
+                f.write(f"BACKUP FALLO: {e!r}\n")
+            if alive is False:
+                f.write("La comprobación previa de Riot falló; la ingesta no correrá. "
+                        "Revisa la key y los PUUID cacheados.\n")
+                status["error"] = "api_key_expired"  # legacy client compatibility
+                status["errors"] = [{"stage": "precheck", "code": "riot_precheck_failed", "count": 1}]
+            else:
+                stage = "sync"
+                import sync_ascent
+                with redirect_stdout(buf):
+                    result = sync_ascent.run_sync(all_flag=False)
+                status.update(state=result["state"], ingested=result["ingested"],
+                              errors=result["errors"])
+                status["error"] = {"completed": None, "partial": "ingestion_partial",
+                                   "failed": "ingestion_failed"}[result["state"]]
+        except Exception as exc:  # never let a pipeline failure crash the timer
+            status["state"] = "failed"
+            status["error"] = "ingestion_failed"
+            status["errors"].append({"stage": stage, "code": "stage_failed", "count": 1})
+            f.write(f"ERROR en etapa {stage} ({type(exc).__name__}); consulta el estado de ingesta.\n")
         finally:
-            sys.argv = old_argv
+            f.write(buf.getvalue())
 
     STATUS.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

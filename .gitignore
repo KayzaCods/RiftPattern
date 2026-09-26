@@ -25,3 +25,10 @@ desktop.ini
 # de iconos lo necesitan. Todo lo demas bajo /data/ sigue denegado.
 /data/*
 !/data/game_data/
+
+# Any SQLite database or its WAL/journal, wherever it is created (not only under
+# data/): a DB outside data/ would otherwise be committable.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal

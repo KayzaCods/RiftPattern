@@ -1,6 +1,6 @@
 # Policy delta en setup de objetivo — mis cuentas vs el jugador de referencia
 
-> ¿QUÉ acción elijo yo vs el jugador de referencia cuando hay dragón/heraldo en juego? Pelear el objetivo / poner visión / ignorar. Este es el eje que separa Master de Challenger (estudio 560k partidas: el combate es plano; la visión y la conducta forward-looking, no). **Hipótesis, no veredicto** — la referencia es un one-trick y su n es chico. Nada de esto se escribe en la DB.
+> ¿QUÉ acción elijo yo vs el jugador de referencia cuando hay dragón/heraldo en juego? Pelear el objetivo / poner visión / ignorar. Este es el eje que separa Master de Challenger (estudio 560k partidas: el combate es plano; la visión y la conducta forward-looking, no). **Hipótesis, no veredicto** — la muestra de la referencia es chica. Nada de esto se escribe en la DB.
 
 Decisiones de objetivo: **978** mías (master+emerald) · **118** de la referencia.
 

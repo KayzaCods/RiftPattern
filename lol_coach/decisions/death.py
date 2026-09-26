@@ -359,9 +359,22 @@ def _evaluate(facts: DeathFacts) -> Decision:
     # joined an already-losing fight to support > a 2-sided trade you lost > caught
     # while retreating > a blind over-extension.
     skirmish = (facts.enemy_deaths + facts.ally_deaths) >= 1
+    # "Rindio" es una afirmacion sobre el RESULTADO del intercambio, no sobre si
+    # la decision fue buena. Antes bastaba `got_value` (una kill o asistencia
+    # tuya) y eso cortocircuitaba la comparacion de bajas: una pelea de 1-por-3
+    # se etiquetaba "Engage que rindio". Medido sobre 540 decisiones: 73 (14%)
+    # tenian MAS bajas aliadas que enemigas, y el desacuerdo del jugador escalaba
+    # con lo malo del intercambio — 3% con ratio favorable, 17% en empate, 30%
+    # ahi. En sus palabras: "una kill por dos muertes no se me hace que rindio".
+    # Ahora la kill personal solo cuenta si el intercambio no sale perdiendo; el
+    # empate se conserva porque tu aporte (peel/CC) pudo sostenerlo.
+    # Que la decision fuera correcta pese al mal resultado es lo que expresa el
+    # eje de opciones, no esta etiqueta.
+    exchange_not_behind = facts.enemy_deaths >= facts.ally_deaths
+    team_won_fight = facts.enemy_deaths > facts.ally_deaths and facts.enemy_deaths >= 1
     if facts.sacrifice_obj:
         action_class = "calculated_sacrifice"
-    elif facts.got_value or (facts.enemy_deaths > facts.ally_deaths and facts.enemy_deaths >= 1):
+    elif team_won_fight or (facts.got_value and exchange_not_behind):
         action_class = "engage_worth"
     elif facts.ally_died_first:
         action_class = "support_lost"

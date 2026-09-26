@@ -31,6 +31,7 @@ from .base import Decision, Option
 from .features import (
     ACTION_FIGHT_ENTRY,
     ACTION_IGNORE_OBJECTIVE,
+    ACTION_ROAM,
     ACTION_VISION_SETUP,
     build_action,
     build_state_features,
@@ -699,6 +700,7 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
     vis_txt = (f"visión {tw}w/{tsw}sw del equipo ({yw}w/{ys}sw tuyas), info {vdiff:+d}"
                if (tw or tsw or yw or ys or vdiff) else "sin visión del equipo")
     num_txt = f"{allies_near} aliado(s) en zona"
+    traded_for = ctx.get("traded_for")
 
     if taken_by_us:
         if setup >= 0.55:
@@ -736,6 +738,56 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
                 taken=True,
             )
             ids = [ACTION_VISION_SETUP, ACTION_FIGHT_ENTRY]
+    elif traded_for:
+        # EJE DE PRIORIDAD. Manda sobre la presencia por decision del jugador
+        # (14-ago): que estuvieras cerca del foso no convierte la jugada en un
+        # "contestaste". Sus palabras: "no se cedio, se hizo el heraldo a cambio
+        # del dragon" y "no se contesto, fue consecuencia de haber ganado la
+        # pelea previa y quedo gratis".
+        #
+        # El menu OFRECE, no afirma. La version anterior decia "Cambiaste X por
+        # Y (lo que hiciste)", y como `traded_for` acepta cualquier objetivo o
+        # edificio en +-75 s, el 64% de las contrapartidas eran torres — que
+        # caen constantemente. Afirmar un intercambio que no existio producia el
+        # 33% de desacuerdo. Medido: ninguna senal disponible (distancia
+        # torre-foso, aliados implicados, aliados en el foso) separa la torre
+        # incidental de la deliberada con las marcas que hay, asi que el arreglo
+        # NO es un umbral nuevo: es dejar de afirmarlo. Como opcion, una
+        # contrapartida espuria solo cuesta que no la elijas.
+        #
+        # Los EV salen del setup previo, nunca del desenlace: cuanto mejor
+        # podias disputarlo, mas vale ir; cuanto peor, mas vale la otra jugada.
+        contra = f", como {traded_for}"
+        opts = [
+            Option(
+                label=f"Ir a por {name}",
+                predicted_consequence=(
+                    f"Disputarlo con lo que habia ({vis_txt}; {num_txt}). "
+                    f"Setup {int(setup * 100)}%."
+                ),
+                ev_score=round(0.30 + 0.55 * setup, 2),
+                taken=bool(at_pit),
+            ),
+            Option(
+                label=f"Otra jugada de más valor{contra}",
+                predicted_consequence=(
+                    f"La prioridad estaba en otro sitio: mientras {name} caia, tu equipo "
+                    f"tenia {traded_for} disponible. Con setup {int(setup * 100)}% para "
+                    "disputarlo, cambiar de objetivo puede valer mas que forzarlo."
+                ),
+                ev_score=round(0.75 - 0.25 * setup, 2),
+                taken=not at_pit,
+            ),
+            Option(
+                label="Ceder y reagrupar",
+                predicted_consequence=(
+                    "Ni disputarlo ni cambiarlo: salir sin gastar recursos y volver a "
+                    "agruparse para la siguiente jugada."
+                ),
+                ev_score=round(0.55 - 0.15 * setup, 2),
+            ),
+        ]
+        return opts, [ACTION_FIGHT_ENTRY, ACTION_ROAM, ACTION_IGNORE_OBJECTIVE]
     elif near and not too_far:
         # You were at the pit and it fell to the enemy: you contested and lost it.
         # With setup the CALL was right (loss = execution/coinflip); without, forcing
@@ -772,25 +824,9 @@ def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool
             )
             ids = [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
     else:
-        # You weren't there and the enemy took it.
-        traded = ctx.get("traded_for")
-        if traded:
-            # Objective-for-objective: your team took something else meanwhile.
-            crit = Option(
-                label=f"Cambiaste {name} por {traded} (lo que hiciste)",
-                predicted_consequence=(
-                    f"Trade de objetivos: mientras {name} caía, tu equipo se llevó {traded}. "
-                    f"Con setup {int(setup * 100)}% para disputarlo, el cambio fue una jugada válida."
-                ),
-                ev_score=0.78,
-                taken=True,
-            )
-            actual = Option(
-                label=f"Disputar {name} en vez del cambio",
-                predicted_consequence="Pelear el objetivo implicaba soltar lo que tu equipo sí estaba asegurando.",
-                ev_score=0.55,
-            )
-            return [crit, actual], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+        # You weren't there and the enemy took it. El caso con contrapartida ya
+        # lo atrapa el eje de prioridad de arriba, que ahora manda sobre la
+        # presencia; aqui solo llegan los que NO tienen `traded_for`.
         if setup < 0.6:
             # No setup: ceding/trading WAS the right play — the recommendation is what
             # you did; the contrast is the bad alternative. (Player: "la recomendada no
