@@ -121,3 +121,95 @@ def test_evaluate_takes_no_conn():
     # Structural guard: _evaluate's only parameter is `facts` — it never touches a DB.
     import inspect
     assert list(inspect.signature(_evaluate).parameters) == ["facts"]
+
+
+# ------------------------------------------------ #23 Fase C: eje luchar/huir
+_BRANCHES = {
+    "engage_blind": {},
+    "engage_worth": {"got_value": True},
+    "trade_lost": {"ally_deaths": 1},
+    "disengage_failed": {"retreating": True},
+    "support_lost": {"ally_died_first": True, "ally_deaths": 1},
+    "calculated_sacrifice": {"sacrifice_obj": {"name": "la torre", "rel_s": -1.0}},
+}
+# Orden (action_ids) e indice tomado que congelan el fingerprint de las marcas.
+# Solo disengage_failed cambia: antes era [disengage, disengage] con t1.
+_FROZEN = {
+    "engage_blind": (["fight_entry", "disengage"], 0),
+    "engage_worth": (["fight_entry", "disengage"], 0),
+    "calculated_sacrifice": (["fight_entry", "disengage"], 0),
+    "trade_lost": (["disengage", "fight_entry"], 1),
+    "support_lost": (["disengage", "fight_entry"], 1),
+    "disengage_failed": (["fight_entry", "disengage"], 1),
+}
+_STRONG = {"power": {"local_level_diff": 3, "local_gold_diff": 1500,
+                     "ally_count_nearby": 3, "enemy_count_nearby": 1},
+           "info_risk": {"enemies_unseen": 0, "wards_nearby": 2},
+           "wave_tempo": {}, "objectives": {}}
+_WEAK = {"power": {"local_level_diff": -3, "local_gold_diff": -1500,
+                   "ally_count_nearby": 1, "enemy_count_nearby": 3},
+         "info_risk": {"enemies_unseen": 5, "wards_nearby": 0},
+         "wave_tempo": {}, "objectives": {}}
+
+
+def _aids(d):
+    return [a["action_id"] for a in d.context["action"]["available_actions"]]
+
+
+def test_every_branch_offers_a_real_axis_in_its_frozen_order():
+    for name, over in _BRANCHES.items():
+        d = _evaluate(_facts(**over))
+        assert d.context["inferred_action_class"] == name
+        ids, taken = _FROZEN[name]
+        assert _aids(d) == ids, name
+        assert taken_index(d.options) == taken, name
+        assert len(set(ids)) == 2, f"{name}: el eje repite una accion"
+
+
+def test_no_label_self_describes_or_narrates_the_outcome():
+    banned = ("hiciste", "rindió", "cayó", "te alcanzaron", "lo perdiste",
+              "tarde", "arreglo", "defendible")
+    for name, over in _BRANCHES.items():
+        for o in _evaluate(_facts(**over)).options:
+            text = (o.label + " " + o.predicted_consequence).lower()
+            assert not any(b in text for b in banned), (name, o.label)
+
+
+def test_recommendation_follows_the_local_setup_not_the_branch():
+    """Con ventaja, luchar (entrar, llevarte el objetivo) supera a huir; sin
+    ventaja, al reves -- en TODAS las ramas. Antes la rama fijaba el ganador."""
+    for name, over in _BRANCHES.items():
+        for sf, aggressive_wins in ((_STRONG, True), (_WEAK, False)):
+            d = _evaluate(_facts(state_features=sf, **over))
+            ev = {a: o.ev_score for a, o in zip(_aids(d), d.options)}
+            assert (ev["fight_entry"] > ev["disengage"]) is aggressive_wins, (name, ev)
+
+
+def test_labels_are_the_same_whichever_branch_so_the_menu_predicts_nothing():
+    """Las cuatro ramas de pelea comparten etiquetas: el menu no delata la rama
+    (que sale del desenlace) ni, por tanto, la opcion de max EV."""
+    fight_branches = ("engage_blind", "engage_worth", "trade_lost", "disengage_failed")
+    labels = {name: sorted(o.label for o in _evaluate(_facts(**_BRANCHES[name])).options)
+              for name in fight_branches}
+    assert len({tuple(v) for v in labels.values()}) == 1, labels
+
+
+def test_without_setup_signal_the_axis_is_even():
+    d = _evaluate(_facts())          # state_features sin senal -> setup None
+    assert [o.ev_score for o in d.options] == [0.55, 0.55]
+
+
+def test_tied_axis_reads_the_same_whatever_the_branch_order():
+    """Con EV empatado el argumento no puede decir "fue acertada" solo porque la
+    tomada va primero en esa rama (max() elige la primera)."""
+    for name, over in _BRANCHES.items():
+        arg = _evaluate(_facts(**over)).argument          # sin senal: 0.55/0.55
+        assert "no marcan una alternativa claramente superior" in arg, name
+        assert "fue acertada" not in arg, name
+
+
+def test_disengage_failed_keeps_the_timing_lesson_without_a_verdict():
+    arg = _evaluate(_facts(retreating=True)).argument
+    assert "Ibas de salida cuando te alcanzaron" in arg
+    pre = arg.split("Las heurísticas")[0]
+    assert "EV" not in pre and "acertada" not in pre

@@ -20,12 +20,12 @@ dominant pattern is **over-extending while ahead**.
 > generated coaching prose are in Spanish (I'm the target user). The code and
 > docs are in English.
 
-**By the numbers** (measured 2026-09-25; own games only, the reference cohort is
-excluded):
+**By the numbers** (database figures measured 2026-09-25, own games only, the
+reference cohort excluded; test count measured 2026-09-27):
 
 | Own ranked games | Decision points | Human marks | Active detectors | Tests |
 |---:|---:|---:|---:|---:|
-| 310 | 4,407 | 505 | 4 | 650 |
+| 310 | 4,407 | 505 | 4 | 678 |
 
 The dashboard's review list shows 3,741 of those decision points: trades the
 engine scores as won are still detected and stored, but hidden from review.
@@ -50,9 +50,11 @@ four-stage review: *01 Program's analysis*, *02 Available evidence*, *03 Your
 reasoning*, *04 Calibration / result*. The option picker, at the end of stage
 02, is neutral: it shows no EV, no bar and no "recommended" badge. The EV
 breakdown and the later outcome only appear in stage 04 once an option has been
-selected. The picker is only half of the fix, though: for `death` and `tempo`,
-the program's own prose in stage 01 still names the highest-EV option (visible
-in the screenshot below; see [Known limitations](#known-limitations)).
+saved, not merely selected. Stage 01 keeps the program's reading of the
+situation but not its verdict: the sentence comparing what I did with the
+highest-EV option, the HEF verdict and the EV breakdown all stay behind that
+gate. (The screenshot below predates this gate and the new `death` options: its
+stage 01 still shows the EV comparison and an option labelled "lo que hiciste".)
 
 ![An expanded decision: the program's analysis, the evidence, your reasoning and the calibration](docs/img/decision.png)
 
@@ -84,10 +86,15 @@ variety. The point is to review without doomscrolling.
 ## How it works
 
 ```
-Riot API + Live Client capture + game recordings  ->  4 decision detectors
+Live Client capture (1 Hz) + game recordings + Riot Match-V5
+        ->  ingestion  ->  SQLite  ->  4 decision detectors
         ->  evaluation (HEF)  ->  options with EV + written argument
-        ->  human feedback  ->  Bradley-Terry preference learner  ->  weights
+        ->  review dashboard  ->  human feedback
+        ->  Bradley-Terry preference learner  ->  HEF weights
 ```
+
+The whole evaluation path is deterministic: the same match data always yields
+the same decisions, EVs and prose.
 
 1. **Capture.** A 1 Hz poller reads the in-game Live Client API for exact
    per-second state (HP, mana, gold, position). Riot's Match-V5 timeline
@@ -149,9 +156,19 @@ These are the parts I'm most proud of:
   decision should offer one real axis (trade or don't, go for this objective or
   take a higher-value play), written from what was knowable at that instant.
   Phrasing an option from the outcome is outcome bias dressed as coaching, and it
-  corrupts the preference model. The rule is applied to `trade` and to the
-  objective priority axis. The rest is pending (see
-  [Known limitations](#known-limitations)).
+  corrupts the preference model. The rule is applied to `trade`, `death`
+  (fight or flee, try to save the fight or don't add your death, take the objective
+  or leave alive) and `objective_readiness` (contest or concede the pit, whether
+  your presence is decisive, this objective or a higher-value play). EVs come
+  from the local setup before the play, not from how it ended. `tempo` is still
+  pending (see [Known limitations](#known-limitations)).
+- **One detector can be re-analyzed in place.** The general re-analysis deletes
+  and reinserts every detector. Changing one detector's vocabulary uses a
+  separate tool that re-runs only that detector, requires its decision keys to
+  match the stored ones one to one, and updates only the columns the detector
+  produces. Ids, marks, clips and timestamps stay untouched; a dry run reports
+  which marks become historical before anything is written, and the write is
+  preceded by a full backup.
 - **The UI must not dictate the answer.** A read-only check
   (`scripts/anchoring-check.py`) measures how often the option I mark as right
   coincides with the system's max-EV option.
@@ -163,6 +180,11 @@ These are the parts I'm most proud of:
     names no option) matched 3/9 = 33% (Wilson 95% CI 12.1–64.6%). That is below
     the 60% suspicion threshold, but with n = 9 the interval still reaches
     64.6%. It is an indication, not a confirmation.
+  - The picker was not the only channel. Stage 01 prose, the HEF verdict on the
+    collapsed row and the Calibrate view also named the answer; they now stay
+    hidden until an option is saved. A test pins every cut marker in the
+    dashboard to the literal template text in the detector, so rewording a
+    sentence cannot silently reopen the leak.
 - **I/O separated from pure logic** in every detector. `_gather_facts` does all
   the database work and `_evaluate` is pure, which makes the criterion branches
   unit-testable without a database.
@@ -179,34 +201,41 @@ These are the parts I'm most proud of:
   closed, digest-checked set of rows, two columns only, and only on a registered
   copy of the database. It has been rehearsed with an exact rollback. It has
   **not** been applied to the production database.
-- **650 characterization tests** pin the behavior as a safety net for
+- **678 characterization tests** pin the behavior as a safety net for
   criterion refactors.
 
 ---
 
 ## Known limitations
 
-- **The recommendation still leaks before the choice for `death` and `tempo`.**
-  Their stage 01 prose ends with the highest-EV option and its EV, and the HEF
-  verdict ("decisión pobre") is shown in stage 01 and on the collapsed row. The
-  neutral picker only removes the recommendation from the picker itself. Marks
-  on these two detectors should not be read as independent of the system.
-- **The recommendation appears on selection, not on save.** The stage 04
-  breakdown renders as soon as an option is *selected*, before the choice is
-  saved. A different option can be chosen afterwards, so no independent first
-  choice is recorded.
+- **`tempo` still needs a discriminating situational signal.** Its options and
+  EVs still depend partly on how the fight ended. Removing those outcome terms
+  was tried: "Rotate" became the top option in 63 of 63 decisions, because the
+  situational signals the detector reads today barely vary between cases. The
+  vocabulary stays as it was until a real signal exists (value of what I was
+  doing, setup at the fight, numbers). Marks on `tempo` are not independent of
+  the engine.
+- **Which options appear together still partly predicts the answer.** After the
+  `death` and `objective` rewrites, the option set predicts the highest-EV
+  option in about 58% and 68% of decisions (down from 99.8% and 96%). For
+  `death` that is roughly the base rate of fleeing being right; for `objective`
+  it comes from what I did being correlated with the setup, plus one fixed rule
+  for objectives that must be defended.
+- **Only the last choice is stored.** Once a saved option reveals the
+  calibration, a different option can still be chosen and saved; the backend
+  keeps the latest one, not the first independent choice.
 - **Editing a note can revive a legacy mark.** For old marks made before
   fingerprints existed, validity falls back to the mark's timestamp. Editing only
   the note refreshes that timestamp and can make a stale mark count again.
-- **Older option vocabulary in `death` and most `objective` branches.** These
-  still label one option "(what you did)" and some are phrased from the outcome.
-  Migrating them invalidates existing marks, so it is deferred.
-- **Possible hindsight in some menus and EVs.** A few branches may condition the
-  offered options or their EVs on what happened afterwards. How often this
-  happens in the stored data has not been measured yet.
-- **The trade PRE regeneration is not applied to production.** Past trade
-  decisions are still evaluated on the old, up-to-a-minute-stale state until that
-  step is authorized and carried out.
+- **Possible hindsight in other branches.** Outside `tempo`, a few branches may
+  still condition options or EVs on what happened afterwards; how often this
+  happens in the stored data has not been measured.
+- **The trade PRE regeneration is not applied to production.** New analyses use
+  the corrected temporal contract, and the rewrite of historical rows has been
+  rehearsed on a copy (840 rows, exact rollback). Past trade decisions are still
+  evaluated on the old, up-to-a-minute-stale state until that step is
+  authorized, and there is deliberately no command that applies it to the
+  production database.
 - **Timeline positions are per minute.** Match-V5 gives one position frame per
   minute and no ward positions at all, so any positional inference from the
   timeline is approximate.
@@ -244,7 +273,12 @@ copy config.example.toml config.toml
 .venv\Scripts\python.exe -m pytest
 ```
 
-The suite needs no network. 650 tests in total. On a fresh clone 627 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
+`config.toml` in the repository root is the default. To use a config file
+somewhere else (a second setup, or a synthetic one for a demo), set
+`LOL_COACH_CONFIG` to its path; an explicit path passed in code still wins over
+both.
+
+The suite needs no network and no Riot data. 678 tests in total. On a fresh clone 655 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
 
 The minimap strip needs a one-time calibration per recording source. You drag a
 rectangle over the minimap on a sample frame, and the result is stored in

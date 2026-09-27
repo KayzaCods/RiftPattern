@@ -14,7 +14,8 @@ knowing it is wrong. The dominant measured pattern for this account is
 **over-extension while ahead**.
 
 Scale as of 2026-09-25, counting own games only: 310 ranked games, 4,407
-decision points, 505 human marks, 4 active detectors and 650 tests.
+decision points, 505 human marks and 4 active detectors. The test suite has 678
+tests (2026-09-27).
 
 ---
 
@@ -48,6 +49,15 @@ model. This is a deliberate choice, for three reasons:
 
 The cost is that the prose is plainer and more repetitive than generated text
 would be.
+
+**Configuration.** `lol_coach.config.load_config` resolves the config file by
+precedence: an explicit path, then `$LOL_COACH_CONFIG` (when set and non-empty),
+then `config.toml` in the repository root. A clone without `config.toml` still
+runs the whole suite: `tests/conftest.py` writes a synthetic config (placeholder
+key, temporary DB and raw directory) into a temp directory outside the repo and
+points `$LOL_COACH_CONFIG` at it, but only when neither the variable nor the file
+exists. The dashboard loads its config at import time, so without this its tests
+would be skipped instead of run.
 
 ---
 
@@ -200,6 +210,28 @@ Enemy **pre-fight visibility** is measured 10 s *before* the death, not at the
 moment of death. The kill event itself "reveals" the killer, which would
 otherwise make every gank look "seen".
 
+**Options.** The class only picks the *axis* and which side was taken; no label
+narrates the outcome or says "what you did".
+
+- Fights (`engage_blind`, `engage_worth`, `trade_lost`, `disengage_failed`):
+  fight (stay and commit) or flee (leave before committing), with the same labels
+  in all four.
+- `support_lost`: go in to save the fight, or stay out and don't add a second
+  death.
+- `calculated_sacrifice`: take the objective even if it costs your life, or
+  leave alive and concede it.
+
+EV is `0.25 + 0.60·setup` for the aggressive option and its complement for the
+defensive one, where `setup` is the same local-setup score trade uses (0.55 each
+when there is no signal). Before this change every branch fixed its own two EVs,
+so the option set alone predicted the max-EV option in 1,949 of 1,952 decisions;
+with the setup-derived EV that drops to 57.7%, the base rate of fleeing being
+right. The order of options is frozen per branch so existing fingerprints do not
+move; only `disengage_failed`, which used to offer `disengage` twice, changed its
+fingerprint, turning 15 marks historical. The rewrite was applied to the
+production database with the in-place tool described under
+[Safety invariants](#safety-invariants).
+
 ### trade_v1
 
 Bot-lane damage exchanges during laning (minutes 2–14, support/bot roles, bottom
@@ -258,6 +290,14 @@ series inside the trade window. Without recorder data, no second is claimed.
 Fights your team took without you. It does not fire if you were dead (estimated
 respawn plus a grace period) or if the fight was physically unreachable.
 
+`tempo_v1` still uses the older vocabulary, and part of its EV depends on how the
+fight ended (a lost fight adds to "rotate", a dominant win subtracts from it).
+Removing only those outcome terms was tried read-only: "Rotate" became the
+top option in 63 of 63 decisions, because every case was reachable in time and
+the remaining situational signals barely vary. The fix needs a new signal (value
+of what the player was doing, setup at the fight, numbers), not a re-weighting,
+so nothing was changed. See [Known limitations](README.md#known-limitations).
+
 ### objective_readiness_v1
 
 Each epic objective taken (dragon, herald, baron). It scores `setup` from team
@@ -266,6 +306,20 @@ vision, numbers near the pit, position and resources. It handles:
 - must-defend states, where conceding is correct;
 - uncontested or dominating states, where presence is optional;
 - natural despawn, which is not a "steal".
+
+**Options.** One axis per *situation*, with the same labels whatever happened:
+at the pit, go for it or concede and regroup; with a counterpart, the priority
+axis below; for presence (dominating or uncontested states), be at the pit
+because your presence can decide the fight, or don't and zone, ward or make
+another play. EV comes from the local setup at the pit (go `0.25 + 0.60·s`,
+concede the complement); for presence it is the team's setup *without* the
+player, since presence is redundant if the team already had it. Must-defend
+states keep their fixed prior-state rule (concede 0.80, contest 0.25). The
+option set used to predict the max-EV option in 96% of decisions; it now does so
+in about 68%. The stored order of some branches was decided by the setup
+threshold itself, so the dashboard shows options in alphabetical order without
+touching the stored index. Applied to the production database in place; 9 marks
+became historical.
 
 When the team took another objective or structure around the same time, the
 detector no longer *asserts* a trade ("you traded X for Y"). The counterpart
@@ -297,11 +351,10 @@ are not imported:
 ## Options: one decision axis, stated from the prior context
 
 The options attached to a decision are the part users actually read, and they are
-easy to get subtly wrong. There are three rules. The first two are the target
-state and are applied to `trade_v1` and to the objective priority axis; `death_v1`
-and the remaining objective branches still use the older vocabulary (see
-[Known limitations](README.md#known-limitations)). The third holds in every
-detector.
+easy to get subtly wrong. There are three rules. The first two are applied to
+`trade_v1`, `death_v1` and `objective_readiness_v1`; `tempo_v1` still uses the
+older vocabulary (see [Known limitations](README.md#known-limitations)). The
+third holds in every detector.
 
 1. **One real axis.** A decision offers parallel actions a player could choose
    before knowing how it ends: trade or don't, this objective or a better play.
@@ -457,18 +510,27 @@ recommendation, and the learner trains on a copy of itself.
   [12.1, 64.6]. That is below the 60% suspicion threshold, but with n = 9 the
   interval still reaches 64.6%. It is an indication in favour of the fix, not a
   confirmation. More marks are needed.
-- **What the picker hides.** It shows no `optimal` flag, EV, bar or colour. While
-  no option is selected, the calibration stage (04) shows only a line saying it
-  becomes available after you register your decision; the EV breakdown and the
-  recommendation are absent from the DOM, not blurred or silhouetted. They do
-  appear as soon as an option is *selected*, before the choice is saved. That
-  gap is a known limitation.
-- **What the picker does not hide.** For `death` and `tempo`, the argument shown
-  in stage 01 ends by naming the highest-EV option and its EV, and the HEF
-  verdict is visible in stage 01 and on the collapsed row. The picker fix
-  removes the recommendation from the picker, not from the page, so marks on
-  those two detectors are not independent of the system. The first neutral
-  batch above was all trades, whose prose names no option.
+- **What the picker hides.** It shows only the option label: no `optimal`
+  flag, EV, bar, colour, predicted consequence or verdict suffix. Until an
+  option has been *saved*, the calibration stage (04) shows only a line saying
+  it becomes available after you register your decision; the EV breakdown and
+  the recommendation are absent from the DOM, not blurred. Selecting an option
+  does not open it, and neither does saving only a note.
+- **Nothing of the program's verdict before the choice.** The picker was not the
+  only channel. For `death` and `tempo`, the stored argument ends by comparing
+  what you did with the highest-EV option. `splitArgument` cuts it at render
+  time on literal markers from the detector templates: the reading of the
+  situation stays in stage 01, the comparison and the HEF panel move to stage
+  04, behind the same gate. The HEF label on the collapsed row, the EV of the
+  taken option in the map annotation, the "EV gap" chips in the review queues
+  and the verdict in the Calibrate view are gone from pre-choice views too. The
+  stored argument, `/api/*` and fingerprints are unchanged, so no mark was
+  invalidated. `tests/test_argument_reveal_split.py` pins each marker to the
+  literal template text and runs the cut with Node over real template output.
+- **What is still open.** After the reveal, a different option can be chosen and
+  saved; only the latest choice is stored. The option set itself still partly
+  predicts the answer in `death`, `objective` and `tempo` (see the detector
+  sections).
 
 **Which decision to mark next** (`lol_coach/trade_queue.py`). Marks are the
 scarce resource, so the review queue orders unmarked decisions by how much the
@@ -714,7 +776,7 @@ step.
 
 ## Testing
 
-650 characterization tests, run with `pytest`. They pin current behavior as
+678 characterization tests, run with `pytest`. They pin current behavior as
 a safety net for criterion refactors.
 
 - `test_features.py`: pure evaluation. HEF and penalties, `_commit_fit`,
@@ -750,13 +812,21 @@ a safety net for criterion refactors.
   `test_account_puuid_refresh.py`, `test_db_backup_rotation.py`: run states
   independent of key health, PUUID re-resolution with the cache as fallback, and
   backup rotation that never touches manual backups.
+- `test_argument_reveal_split.py`: nothing of the program's verdict before the
+  choice. Cut markers against the detector templates, and the cut itself run
+  with Node over real template output.
+- `test_inplace_reanalysis.py`: one-detector in-place re-analysis. Key-set
+  equality, the column allowlist, preserved ids, marks and reward, dry run
+  without writes.
+- `test_config.py`: config precedence (explicit path, `LOL_COACH_CONFIG`,
+  `config.toml`).
 - `test_download_champion_icons.py`: the icon downloader. Catalogue filtering,
   rejection of malicious ids, path containment, symlinks, PNG header validation,
   atomic writes and idempotence.
 - `test_exposure.py`, `test_anchor_eval.py`, `test_policy_delta.py`: the
   read-only studies.
 
-Nothing in the suite requires network access. On a fresh clone 627 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
+Nothing in the suite requires network access or Riot data. On a fresh clone 655 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
 
 ---
 
@@ -769,9 +839,20 @@ Nothing in the suite requires network access. On a fresh clone 627 pass and 23 a
    (`lol_coach_YYYYMMDD.db`). Manual checkpoints taken before risky operations
    are evidence and are never rotated away.
 3. Re-analysis goes only through `analyze.py` / `sync_ascent`
-   (`persist_decisions`). Never `DELETE FROM decisions` by hand. Historical rows
-   are rewritten in place only by the selective regeneration tool, and only on a
-   registered copy.
+   (`persist_decisions`). Never `DELETE FROM decisions` by hand. Two bounded
+   exceptions rewrite rows in place:
+   - `scripts/reanalyze_inplace.py <death_v1|objective_readiness_v1>`
+     (`lol_coach/inplace_reanalysis.py`) re-runs ONE detector and updates only
+     `moment`, `outcome`, `context_json`, `options_json` and `argument` of its
+     rows. Ids, marks, clips and `created_at` are untouched and the `reward` in
+     `context_json` is preserved. The keys `(match_id, detector_id,
+     game_time_ms)` must match one to one or it aborts without writing; it runs
+     under `BEGIN IMMEDIATE` with an SQLite authorizer that allows only those
+     columns, is a read-only dry run by default, and backs the database up
+     before `--apply`. It exists because `analyze.py` re-runs every detector,
+     including `trade_v1`, whose historical PRE rewrite is not authorized. It
+     does not touch `analyzed_at_utc`, and trade is not supported.
+   - The selective trade PRE regeneration, only on a registered copy.
 4. Fixed order: detectors → reward → clips. Skipping clips orphans them.
 5. `analyzed_at_utc` is the "done" marker.
 6. Ranked only; normals and remakes are tombstoned.
@@ -795,6 +876,7 @@ Nothing in the suite requires network access. On a fresh clone 627 pass and 23 a
 | `scripts/anchoring-check.py [--since DATE] [--detector ID]` | does the UI dictate the answer? (read-only) |
 | `scripts/migrate_trade_keys.py [--apply]` | key migration for the trade_v1 timing fix (dry-run by default) |
 | `scripts/regenerate_trade_pre.py prepare \| dry-run \| apply-copy \| verify \| rollback-copy` | selective PRE regeneration, **registered copy only** |
+| `scripts/reanalyze_inplace.py <death_v1\|objective_readiness_v1> [--apply]` | re-analyze one detector in place (dry-run by default) |
 | `scripts/exposure_anchor_set.py` | build the blind anchor set to label |
 | `scripts/exposure_validation.py` | validate exposure_v1 against the labeled anchors |
 | `scripts/attention_experiment.py` | pre-registered attention experiment, stage 1 |
@@ -802,9 +884,11 @@ Nothing in the suite requires network access. On a fresh clone 627 pass and 23 a
 | `.venv\Scripts\python.exe -m pytest` | run the test suite |
 
 Everything below `sync_ascent.py` and `analyze.py` in that list is read-only,
-with two exceptions:
+with three exceptions:
 
 - `migrate_trade_keys.py --apply` backs the database up before writing and
   refuses to run twice (it records itself in `applied_migrations`).
 - `regenerate_trade_pre.py` writes only to the trial copy that its own `prepare`
   step created.
+- `reanalyze_inplace.py --apply` backs the database up first (unless told not
+  to, for a copy) and writes only the detector's own columns.

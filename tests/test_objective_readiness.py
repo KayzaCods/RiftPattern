@@ -3,7 +3,7 @@
 Builds an epic-monster kill (a dragon taken by our team, at the pit, with vision
 and allies in zone) and asserts the contract plus the detector's signature
 behavior: when you contested with setup and it was YOUR objective, the taken
-action is `fight_entry` ("lo correcto", confirm-once). Also guards the skips:
+action is `fight_entry` (eje del foso, #23 Fase D). Also guards the skips:
 natural despawn and non-eval monsters produce no decision.
 """
 from __future__ import annotations

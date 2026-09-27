@@ -589,291 +589,158 @@ def _detect_recall_in_window(
     return None
 
 
+# EV de los ejes de objetivo derivado del setup local (#23 Fase D), la misma
+# familia que death y trade: la opcion de disputar escala con el setup y la de
+# ceder con su complemento. Rango [0.25, 0.85].
+EV_FLOOR = 0.25
+EV_SPAN = 0.60
+
+
+def _setup_at_pit(ctx, has_resource: bool, is_support: bool, include_you: bool = True) -> float:
+    """¿Se podia disputar BIEN? vision + numeros dominan; estar cerca sin ninguna
+    de las dos NO es setup. Con la mayoria del equipo en zona, los numeros solos
+    justifican disputar (jugador: "llegamos a tiempo, estabamos la mayoria").
+    `include_you=False` quita tu propia presencia: es la pregunta del eje de
+    presencia (¿el equipo lo tenia sin ti?)."""
+    s = ctx["your_state_at_kill"]
+    hp, mana = s["hp_pct"], s["mana_pct"]
+    yw = ctx.get("your_wards_near_pit", 0); ys = ctx.get("your_sweeps_near_pit", 0)
+    tw = ctx.get("team_wards_near_pit", 0); tsw = ctx.get("team_sweeps_near_pit", 0)
+    vdiff = ctx.get("vision_diff", 0) or 0
+    allies_near = ctx.get("allies_near_pit", 0)
+    # TEAM vision counts (the support wards for the jungler).
+    have_vision = (tw + tsw) >= 1 or (yw + ys) >= 1
+    near = ctx["at_pit"] or (is_support and not ctx["too_far"])
+    low_res = has_resource and mana is not None and mana < MANA_LOW_PCT
+    low_hp = hp is not None and hp < HP_LOW_PCT
+    setup = (0.40 if have_vision else 0.0) \
+        + (0.15 if vdiff > 0 else 0.0) \
+        + (0.30 if allies_near >= 3 else 0.20 if allies_near == 2 else 0.10 if allies_near == 1 else 0.0) \
+        + (0.15 if (include_you and near and not ctx["too_far"]) else 0.0) \
+        + (0.10 if not (low_res or low_hp) else 0.0)
+    return max(0.0, min(1.0, setup))
+
+
 def _build_options(ctx, taken_by_us, has_resource: bool = True, is_support: bool = False,
                    must_defend: bool = False, dominating: bool = False) -> tuple[list[Option], list[str]]:
-    """Returns (options, action_ids): each branch knows the action semantics of its
-    own option positions, so the HEF's taken-action mapping stays correct."""
-    s = ctx["your_state_at_kill"]
-    hp = s["hp_pct"]
-    mana = s["mana_pct"]
-    at_pit = ctx["at_pit"]
-    too_far = ctx["too_far"]
+    """(options, action_ids) con un eje por SITUACION, no por desenlace (#23 Fase D).
 
-    if must_defend:
-        # No setup to contest (disadvantage / base siege): ceding+defending is
-        # right, forcing the objective is the mistake. The two options must
-        # CONTRAST (cede=good vs force=bad), not repeat each other — the one you
-        # actually did carries the "(lo que hiciste)" tag.
-        reason = ("inhibidor propio caído" if ctx.get("own_inhibitors_lost", 0) >= 1
-                  else "desventaja clara")
-        ceded = not at_pit
-        traded = ctx.get("traded_for")
-        trade_txt = (f" Además tu equipo se llevó {traded} mientras tanto: fue objetivo por objetivo."
-                     if traded else "")
-        return [
-            Option(
-                label="Ceder el objetivo y defender/reagrupar" + (" (lo que hiciste)" if ceded else ""),
-                predicted_consequence=(
-                    f"Sin setup para contestar ({reason}): cederlo y no exponerte preserva la base y tu vida."
-                    + (" Hiciste lo correcto." if ceded else "") + trade_txt
-                ),
-                ev_score=0.80,
-                taken=ceded,
-            ),
-            Option(
-                label="Forzar el objetivo / exponerte a contestarlo" + ("" if ceded else " (lo que hiciste)"),
-                predicted_consequence=(
-                    "Sin setup, forzar el objetivo regala una muerte y acelera el asedio a tu base."
-                    + ("" if ceded else " Te expusiste sin poder contestarlo.")
-                ),
-                ev_score=0.25,
-                taken=not ceded,
-            ),
-        ], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+    Tres ejes, mismas etiquetas pase lo que pase:
+      foso:      "Ir a por X" / "Ceder y reagrupar"             (fight_entry / ignore_objective)
+      prioridad: + "Otra jugada de más valor, como Y"           (roam; solo con contrapartida)
+      presencia: "Estar en el foso…" / "No estar…"              (vision_setup / ignore_objective)
 
-    if dominating:  # param carries presence_optional: controlled (big lead) OR uncontested (free)
-        # We took the objective and your presence wasn't decisive. Optimal = put the
-        # freed time where it's worth most; the 2nd option describes what you did
-        # with an EV that reflects whether THAT was a good use of the time.
-        yw = ctx.get("your_wards_near_pit", 0); ys = ctx.get("your_sweeps_near_pit", 0)
-        free = ctx.get("objective_uncontested") and not ctx.get("objective_dominated")
-        why = ("nadie lo disputó (ningún enemigo cerca)" if free
-               else "tu equipo lo tenía asegurado por la ventaja de oro")
-        # You did fine either way — ONE clear confirmation + a real contrast, not
-        # two near-equal phrasings of the same judgment (player feedback).
-        if ctx.get("too_far"):
-            return [
-                Option(
-                    label="Aprovechaste el tiempo fuera del pit: reset/farm/presión (lo que hiciste) — uso correcto del tiempo",
-                    predicted_consequence=f"El objetivo {why}; convertir ese tiempo en oro/presión fue lo acertado.",
-                    ev_score=0.82,
-                    taken=True,
-                ),
-                Option(
-                    label="Hacer acto de presencia en un objetivo ya asegurado",
-                    predicted_consequence="Pararte en el pit no añadía nada: el costo era el tempo que SÍ convertiste en otra parte.",
-                    ev_score=0.35,
-                ),
-            ], [ACTION_IGNORE_OBJECTIVE, ACTION_VISION_SETUP]
-        return [
-            Option(
-                label=f"Acompañaste el objetivo controlado ({yw}w/{ys}sw) (lo que hiciste) — válido",
-                predicted_consequence=(
-                    f"Como {why}, tu presencia no era crítica; acompañar es correcto, con un margen "
-                    f"menor a favor de convertir ese tiempo en presión/farm en otra zona."
-                ),
-                ev_score=0.78,
-                taken=True,
-            ),
-            Option(
-                label="Desentenderte del pit antes de que cayera",
-                predicted_consequence="Irte demasiado pronto es lo que regala robos de último golpe.",
-                ev_score=0.40,
-            ),
-        ], [ACTION_VISION_SETUP, ACTION_IGNORE_OBJECTIVE]
-
-    # Normal contest decision. The real choice at an objective is whether to CONTEST
-    # (with setup: vision + numbers), TRADE it for another play, or DECLINE it.
-    # Judged on the DECISION, not the result (player: "peleamos en desventaja y
-    # perdimos, era momento de pelear" — contesting can be right and still be lost).
+    Antes cada rama tenia sus propias etiquetas y EV fijos, y la opcion tomada se
+    autoetiquetaba ("Contestaste X con buen setup (lo que hiciste) — fue lo
+    correcto"): el menu predecia la opcion de max EV en 1659/1729 decisiones
+   . Ahora las etiquetas no dependen de la rama y el EV sale del setup.
+    El ORDEN de cada rama se conserva para no mover el fingerprint (el dashboard
+    las muestra en orden fijo, asi que el orden guardado ya no delata nada); solo
+    dos ramas cambian de acciones, porque su conjunto dependia del propio setup
+    (ver abajo)."""
     name = ctx.get("objective", "el objetivo")
     yw = ctx.get("your_wards_near_pit", 0); ys = ctx.get("your_sweeps_near_pit", 0)
     tw = ctx.get("team_wards_near_pit", 0); tsw = ctx.get("team_sweeps_near_pit", 0)
     vdiff = ctx.get("vision_diff", 0) or 0
     allies_near = ctx.get("allies_near_pit", 0)
-    # TEAM vision counts (the support wards for the jungler); your own wards aren't
-    # the only setup (player: "tengo a mi soporte cerca limpiando y poniendo visión").
-    have_vision = (tw + tsw) >= 1 or (yw + ys) >= 1
-    near = at_pit or (is_support and not too_far)
-    low_res = has_resource and mana is not None and mana < MANA_LOW_PCT
-    low_hp = hp is not None and hp < HP_LOW_PCT
-    # Setup = could you contest WELL? vision + numbers dominate; being physically
-    # near with neither is NOT setup. With most of the team in zone, numbers alone
-    # justify contesting (player: "llegamos a tiempo, estábamos la mayoría — era
-    # momento de pelear") even if nobody warded first.
-    setup = (0.40 if have_vision else 0.0) \
-        + (0.15 if vdiff > 0 else 0.0) \
-        + (0.30 if allies_near >= 3 else 0.20 if allies_near == 2 else 0.10 if allies_near == 1 else 0.0) \
-        + (0.15 if (near and not too_far) else 0.0) \
-        + (0.10 if not (low_res or low_hp) else 0.0)
-    setup = max(0.0, min(1.0, setup))
+    near = ctx["at_pit"] or (is_support and not ctx["too_far"])
+    too_far = ctx["too_far"]
+    setup = _setup_at_pit(ctx, has_resource, is_support)
     vis_txt = (f"visión {tw}w/{tsw}sw del equipo ({yw}w/{ys}sw tuyas), info {vdiff:+d}"
                if (tw or tsw or yw or ys or vdiff) else "sin visión del equipo")
     num_txt = f"{allies_near} aliado(s) en zona"
-    traded_for = ctx.get("traded_for")
+    state_txt = f"Setup {int(setup * 100)}% ({vis_txt}; {num_txt})."
+    ev_go = round(EV_FLOOR + EV_SPAN * setup, 2)
+    ev_cede = round(EV_FLOOR + EV_SPAN * (1.0 - setup), 2)
 
+    def go(taken, ev=ev_go, cons=f"Disputarlo con lo que había. {state_txt}"):
+        return Option(label=f"Ir a por {name}", predicted_consequence=cons,
+                      ev_score=ev, taken=taken)
+
+    def cede(taken, ev=ev_cede,
+             cons="No gastar recursos en el foso y agruparse para la siguiente jugada."):
+        return Option(label="Ceder y reagrupar", predicted_consequence=cons,
+                      ev_score=ev, taken=taken)
+
+    if must_defend:
+        # Regla de ESTADO previo, no de desenlace: desventaja clara o asedio a tu
+        # base (inhibidor caido). Ahi ceder es lo indicado y forzar regala una
+        # muerte; es el eje ceder/forzar que el jugador aprobo tal cual. Por eso
+        # sus EV siguen fijos (la regla los decide), pero con las etiquetas
+        # comunes: la rama ya no se reconoce por el menu, solo por el contexto.
+        reason = ("inhibidor propio caído" if ctx.get("own_inhibitors_lost", 0) >= 1
+                  else "desventaja clara")
+        ceded = not ctx["at_pit"]
+        return [
+            cede(ceded, ev=0.80, cons=(f"Sin setup para disputarlo ({reason}): no exponerte "
+                                       "preserva la base y tu vida.")),
+            go(not ceded, ev=0.25, cons=(f"Disputarlo con {reason} expone una muerte y acelera "
+                                         "el asedio a tu base.")),
+        ], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+
+    if dominating:  # presence_optional: tu equipo lo tomo controlado o sin disputa
+        # EJE DE PRESENCIA: ¿tu presencia cambiaba algo? Se juzga con el setup del
+        # equipo SIN contarte a ti (si ya lo tenian, estar sobra; si no, tu
+        # presencia pesa). Antes la opcion que tomaste ganaba siempre (0.82 o
+        # 0.78 contra 0.35/0.40): el menu repetia lo que hiciste.
+        team = _setup_at_pit(ctx, has_resource, is_support, include_you=False)
+        stay = Option(
+            label="Estar en el foso: tu presencia puede decidir la pelea",
+            predicted_consequence=(f"Acompañar el objetivo con visión y cuerpo. Setup del equipo "
+                                   f"sin ti {int(team * 100)}% ({vis_txt}; {num_txt})."),
+            ev_score=round(EV_FLOOR + EV_SPAN * (1.0 - team), 2),
+            taken=not too_far)
+        away = Option(
+            label="No estar: zonear, visión u otra jugada",
+            predicted_consequence="Convertir ese tiempo en farm, presión o reset en otra zona.",
+            ev_score=round(EV_FLOOR + EV_SPAN * team, 2),
+            taken=bool(too_far))
+        if too_far:
+            return [away, stay], [ACTION_IGNORE_OBJECTIVE, ACTION_VISION_SETUP]
+        return [stay, away], [ACTION_VISION_SETUP, ACTION_IGNORE_OBJECTIVE]
+
+    traded_for = ctx.get("traded_for")
     if taken_by_us:
         if setup >= 0.55:
-            # You did the right thing — say it ONCE, clearly, and contrast with the
-            # real alternative you didn't take. (Player: "si hice bien, confírmalo;
-            # no me des dos opciones gemelas que tengo que comparar".)
-            crit = Option(
-                label=f"Contestaste {name} con buen setup (lo que hiciste) — fue lo correcto",
-                predicted_consequence=f"Setup {int(setup * 100)}% ({vis_txt}; {num_txt}). Decisión y ejecución alineadas.",
-                ev_score=0.84,
-                taken=True,
-            )
-            actual = Option(
-                label=f"Cederlo pese a tener el setup",
-                predicted_consequence="La alternativa real era regalar un objetivo que tenían ganado.",
-                ev_score=0.30,
-            )
-            ids = [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
-        else:
-            crit = Option(
-                label="Asegurar el objetivo con setup previo: visión + números antes del spawn",
-                predicted_consequence=(
-                    "Con visión y equipo en zona antes del spawn, el objetivo se toma sin regalar "
-                    "una pelea de moneda al aire."
-                ),
-                ev_score=0.84,
-            )
-            actual = Option(
-                label=f"Contestaste {name} y lo conseguiste (lo que hiciste)",
-                predicted_consequence=(
-                    f"Setup {int(setup * 100)}% ({vis_txt}; {num_txt}). "
-                    "Salió, pero con poco setup era arriesgado: pudo costar más de lo que valía."
-                ),
-                ev_score=round(0.54 + 0.30 * setup, 2),
-                taken=True,
-            )
-            ids = [ACTION_VISION_SETUP, ACTION_FIGHT_ENTRY]
-    elif traded_for:
-        # EJE DE PRIORIDAD. Manda sobre la presencia por decision del jugador
-        # (14-ago): que estuvieras cerca del foso no convierte la jugada en un
-        # "contestaste". Sus palabras: "no se cedio, se hizo el heraldo a cambio
-        # del dragon" y "no se contesto, fue consecuencia de haber ganado la
-        # pelea previa y quedo gratis".
-        #
-        # El menu OFRECE, no afirma. La version anterior decia "Cambiaste X por
-        # Y (lo que hiciste)", y como `traded_for` acepta cualquier objetivo o
-        # edificio en +-75 s, el 64% de las contrapartidas eran torres — que
-        # caen constantemente. Afirmar un intercambio que no existio producia el
-        # 33% de desacuerdo. Medido: ninguna senal disponible (distancia
-        # torre-foso, aliados implicados, aliados en el foso) separa la torre
-        # incidental de la deliberada con las marcas que hay, asi que el arreglo
-        # NO es un umbral nuevo: es dejar de afirmarlo. Como opcion, una
-        # contrapartida espuria solo cuesta que no la elijas.
-        #
-        # Los EV salen del setup previo, nunca del desenlace: cuanto mejor
-        # podias disputarlo, mas vale ir; cuanto peor, mas vale la otra jugada.
-        contra = f", como {traded_for}"
-        opts = [
+            return [go(True), cede(False)], [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
+        # Antes: [vision_setup "Asegurar con setup previo", fight_entry]. El
+        # CONJUNTO de acciones dependia del propio setup (con setup alto salia
+        # ceder, con bajo "preparar"), asi que el menu delataba el lado del umbral
+        # y con el la recomendacion. Pasa al eje del foso: fingerprint nuevo.
+        return [cede(False), go(True)], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+    if traded_for:
+        # EJE DE PRIORIDAD (93b5396, aprobado 14-ago): manda sobre la presencia;
+        # ofrece, no afirma. Sus EV ya salian del setup y no cambian.
+        return [
+            go(bool(ctx["at_pit"]), ev=round(0.30 + 0.55 * setup, 2),
+               cons=f"Disputarlo con lo que habia ({vis_txt}; {num_txt}). Setup {int(setup * 100)}%."),
             Option(
-                label=f"Ir a por {name}",
-                predicted_consequence=(
-                    f"Disputarlo con lo que habia ({vis_txt}; {num_txt}). "
-                    f"Setup {int(setup * 100)}%."
-                ),
-                ev_score=round(0.30 + 0.55 * setup, 2),
-                taken=bool(at_pit),
-            ),
-            Option(
-                label=f"Otra jugada de más valor{contra}",
+                label=f"Otra jugada de más valor, como {traded_for}",
                 predicted_consequence=(
                     f"La prioridad estaba en otro sitio: mientras {name} caia, tu equipo "
                     f"tenia {traded_for} disponible. Con setup {int(setup * 100)}% para "
                     "disputarlo, cambiar de objetivo puede valer mas que forzarlo."
                 ),
                 ev_score=round(0.75 - 0.25 * setup, 2),
-                taken=not at_pit,
+                taken=not ctx["at_pit"],
             ),
-            Option(
-                label="Ceder y reagrupar",
-                predicted_consequence=(
-                    "Ni disputarlo ni cambiarlo: salir sin gastar recursos y volver a "
-                    "agruparse para la siguiente jugada."
-                ),
-                ev_score=round(0.55 - 0.15 * setup, 2),
-            ),
-        ]
-        return opts, [ACTION_FIGHT_ENTRY, ACTION_ROAM, ACTION_IGNORE_OBJECTIVE]
-    elif near and not too_far:
-        # You were at the pit and it fell to the enemy: you contested and lost it.
-        # With setup the CALL was right (loss = execution/coinflip); without, forcing
-        # was the mistake. No resultadismo.
+            cede(False, ev=round(0.55 - 0.15 * setup, 2),
+                 cons=("Ni disputarlo ni cambiarlo: salir sin gastar recursos y volver a "
+                       "agruparse para la siguiente jugada.")),
+        ], [ACTION_FIGHT_ENTRY, ACTION_ROAM, ACTION_IGNORE_OBJECTIVE]
+    if near and not too_far:
+        # Estabas en el foso y cayo al enemigo: disputaste. Orden historico segun
+        # el umbral; el dashboard ya no muestra el orden guardado.
         if setup >= 0.5:
-            # The CALL was right even though it was lost — confirm it once and
-            # contrast with the real alternative (ceding with setup in hand).
-            crit = Option(
-                label=f"Contestaste {name} con setup y se perdió (lo que hiciste) — la decisión era correcta",
-                predicted_consequence=(
-                    f"Tenían con qué disputarlo ({vis_txt}; {num_txt}); falló la ejecución o el azar "
-                    f"del robo, no la decisión. El ajuste es de ejecución: smite/daño al objetivo, foco de pelea."
-                ),
-                ev_score=0.70,
-                taken=True,
-            )
-            actual = Option(
-                label=f"Ceder {name} sin pelearlo, teniendo setup",
-                predicted_consequence="La alternativa era regalar un objetivo disputable con el equipo ya posicionado.",
-                ev_score=0.40,
-            )
-            ids = [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
-        else:
-            crit = Option(
-                label=f"Sin setup, ceder {name} o cambiarlo por otra jugada valía más que forzarlo",
-                predicted_consequence="Forzar un objetivo de robo sin visión ni números regala más de lo que el objetivo vale.",
-                ev_score=0.78,
-            )
-            actual = Option(
-                label=f"Forzaste {name} sin visión/números y lo perdiste (lo que hiciste)",
-                predicted_consequence=f"Estabas ahí sin setup ({vis_txt}; {num_txt}) y cayó al enemigo.",
-                ev_score=0.42,
-                taken=True,
-            )
-            ids = [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
-    else:
-        # You weren't there and the enemy took it. El caso con contrapartida ya
-        # lo atrapa el eje de prioridad de arriba, que ahora manda sobre la
-        # presencia; aqui solo llegan los que NO tienen `traded_for`.
-        if setup < 0.6:
-            # No setup: ceding/trading WAS the right play — the recommendation is what
-            # you did; the contrast is the bad alternative. (Player: "la recomendada no
-            # aplica / ambas redundantes".)
-            crit = Option(
-                label=f"Cederlo / cambiarlo por otra jugada (lo que hiciste)",
-                predicted_consequence=(
-                    f"Sin setup para {name} ({vis_txt}; {num_txt}), invertir el tiempo en otra "
-                    f"jugada (farm, presión, reset) fue la decisión correcta."
-                ),
-                ev_score=0.80,
-                taken=True,
-            )
-            actual = Option(
-                label=f"Forzar {name} sin visión ni números",
-                predicted_consequence="La alternativa real era regalarte en un objetivo sin preparación.",
-                ev_score=0.30,
-            )
-            return [crit, actual], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
-        if allies_near == 0:
-            crit = Option(
-                label="Coordinar el contest antes del spawn (call de equipo, visión previa)",
-                predicted_consequence=f"Había setup parcial ({vis_txt}) pero nadie del equipo jugó {name}: la falla fue colectiva, no tuya.",
-                ev_score=0.78,
-            )
-            actual = Option(
-                label=f"El equipo entero cedió {name} (lo que hiciste)",
-                predicted_consequence="Tu llegada sola no lo cambiaba; el cede fue a nivel de equipo.",
-                ev_score=0.62,
-                taken=True,
-            )
-            ids = [ACTION_VISION_SETUP, ACTION_IGNORE_OBJECTIVE]
-        else:
-            crit = Option(
-                label=f"Presentarte y contestar {name} con tu equipo",
-                predicted_consequence=f"Tu equipo estaba en zona ({num_txt}) con setup ({vis_txt}); faltó tu presencia.",
-                ev_score=0.78,
-            )
-            actual = Option(
-                label=f"Lo cediste sin presentarte, con tu equipo en zona (lo que hiciste)",
-                predicted_consequence="Con setup y aliados jugándolo, no presentarse sí regala valor.",
-                ev_score=0.48,
-                taken=True,
-            )
-            ids = [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
-
-    return [crit, actual], ids
+            return [go(True), cede(False)], [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
+        return [cede(False), go(True)], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+    # No estabas y lo tomo el enemigo (sin contrapartida: esa la atrapa prioridad).
+    if setup < 0.6:
+        return [cede(True), go(False)], [ACTION_IGNORE_OBJECTIVE, ACTION_FIGHT_ENTRY]
+    # allies_near == 0 era [vision_setup "Coordinar el contest antes del spawn",
+    # ignore]: el mismo problema que arriba (el conjunto dependia del setup). Pasa
+    # al eje del foso con fingerprint nuevo; con aliados en zona ya lo era.
+    return [go(False), cede(True)], [ACTION_FIGHT_ENTRY, ACTION_IGNORE_OBJECTIVE]
 
 
 def _compose_argument(ctx, options, has_resource: bool = True, is_support: bool = False) -> str:
@@ -920,10 +787,10 @@ def _compose_argument(ctx, options, has_resource: bool = True, is_support: bool 
 
     if not ctx.get("can_contest", True):
         reason = "inhibidor propio caído" if ctx.get("own_inhibitors_lost", 0) >= 1 else "desventaja clara"
-        lines.append(
-            f"No había setup para contestar este objetivo ({reason}): lo correcto "
-            "era cederlo y defender/reagrupar, no invertir en él."
-        )
+        # Hecho, no veredicto (#23 Fase D): que ceder fuera lo indicado lo dice
+        # el EV en la etapa 04, tras la eleccion. Antes cerraba con "lo correcto
+        # era cederlo y defender/reagrupar", la respuesta escrita en la etapa 01.
+        lines.append(f"No había setup para disputar este objetivo ({reason}).")
 
     if ctx["recall_in_prep_window"]:
         r = ctx["recall_in_prep_window"]
@@ -949,10 +816,7 @@ def _compose_argument(ctx, options, has_resource: bool = True, is_support: bool 
         )
 
     if ctx["too_far"]:
-        lines.append(
-            "La distancia al pit excede 5000u: el posicionamiento previo al "
-            "spawn fue tarde para llegar a tiempo."
-        )
+        lines.append("La distancia al pit excede 5000u: desde ahí no se llegaba a tiempo al spawn.")
 
     lines.append(f"Resultado: {name} cae a {ctx['taken_by']}.")
     return " ".join(lines)

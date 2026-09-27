@@ -60,60 +60,71 @@ def test_evaluate_must_defend_offers_cede():
     assert d.context["action"]["available_actions"][ti]["action_id"] == "ignore_objective"
 
 
-# --- dominating / presence_optional: we took it and our presence wasn't decisive ---
+# --- dominating / presence_optional: eje de PRESENCIA (#23 Fase D) ---
 
-def test_evaluate_dominating_controlled_accompany_is_valid():
-    # Big lead, we took it: hovering with vision wasn't critical -> accompanying is
-    # valid (the taken option sits in the vision_setup slot), with a slim margin in
-    # favor of spending the time elsewhere.
+def _by_action(d):
+    return {a["action_id"]: o for a, o in zip(d.context["action"]["available_actions"], d.options)}
+
+
+def test_evaluate_dominating_controlled_presence_axis_from_team_setup():
+    # Tu equipo lo tomo controlado y estabas: la pregunta es si tu presencia
+    # cambiaba algo. Con el setup del equipo SIN ti alto (vision + 2 aliados),
+    # no estar vale mas. Antes lo que hiciste ganaba siempre ("— válido").
     d = _evaluate(_facts(ctx={"objective_dominated": True}, presence_optional=True))
     assert _taken_action_id(d) == "vision_setup"
-    assert "controlado" in d.options[0].label.lower()
-    assert d.options[0].ev_score > d.options[1].ev_score
+    by = _by_action(d)
+    assert by["vision_setup"].label.startswith("Estar en el foso")
+    assert by["ignore_objective"].ev_score > by["vision_setup"].ev_score
 
 
-def test_evaluate_dominating_too_far_credits_time_elsewhere():
-    # Uncontested objective and you were far: converting the freed time into
-    # farm/reset/pressure was the right use (ignore_objective slot).
+def test_evaluate_dominating_presence_weighs_more_when_the_team_lacked_setup():
+    d = _evaluate(_facts(ctx={"objective_dominated": True, "team_wards_near_pit": 0,
+                              "vision_diff": 0, "allies_near_pit": 0}, presence_optional=True))
+    by = _by_action(d)
+    assert by["vision_setup"].ev_score > by["ignore_objective"].ev_score
+
+
+def test_evaluate_dominating_too_far_same_axis():
     d = _evaluate(_facts(
         ctx={"objective_uncontested": True, "too_far": True, "at_pit": False},
         presence_optional=True))
     assert _taken_action_id(d) == "ignore_objective"
-    assert "tiempo" in d.options[0].label.lower()
-    assert d.options[0].ev_score > d.options[1].ev_score
+    assert d.options[0].label.startswith("No estar")
 
 
 # --- normal contest: we took it, but with thin setup ---
 
-def test_evaluate_taken_with_low_setup_flags_the_risk():
-    # We got it, but without vision/numbers: "what you did" is fight_entry, the
-    # recommended is to build setup first (vision_setup), and its EV reflects the risk.
+def test_evaluate_taken_with_low_setup_is_the_pit_axis():
+    # Antes [vision_setup, fight_entry]: el conjunto dependia del setup. Ahora el
+    # eje del foso, con la recomendacion saliendo del setup (bajo -> ceder).
     d = _evaluate(_facts(ctx={
         "team_wards_near_pit": 0, "team_sweeps_near_pit": 0, "your_wards_near_pit": 0,
         "your_sweeps_near_pit": 0, "vision_diff": 0, "allies_near_pit": 0,
         "at_pit": False}))
     assert _taken_action_id(d) == "fight_entry"
-    assert d.context["action"]["available_actions"][0]["action_id"] == "vision_setup"
-    assert "conseguiste" in d.options[1].label.lower()
+    assert [a["action_id"] for a in d.context["action"]["available_actions"]] == \
+        ["ignore_objective", "fight_entry"]
+    assert d.options[0].ev_score > d.options[1].ev_score
 
 
 # --- normal contest: enemy took it while you were at the pit (contested and lost) ---
 
-def test_evaluate_contest_lost_with_setup_is_the_right_call():
-    # You were there WITH setup and it fell: no resultadismo -> the call was right,
-    # the loss is execution/coinflip.
+def test_evaluate_contest_lost_with_setup_recommends_going():
+    # Estabas CON setup y cayo: la recomendacion sigue al setup, no al resultado.
     d = _evaluate(_facts(ctx={"taken_by": "enemigo", "at_pit": True}, taken_by_us=False))
     assert _taken_action_id(d) == "fight_entry"
-    assert "se perd" in d.options[0].label.lower()
+    assert d.options[0].label.startswith("Ir a por")
+    assert d.options[0].ev_score > d.options[1].ev_score
 
 
-def test_evaluate_contest_lost_without_setup_forcing_was_the_mistake():
+def test_evaluate_contest_lost_without_setup_recommends_ceding():
     d = _evaluate(_facts(ctx={
         "taken_by": "enemigo", "at_pit": True, "team_wards_near_pit": 0,
         "vision_diff": 0, "allies_near_pit": 0}, taken_by_us=False))
     assert _taken_action_id(d) == "fight_entry"
     assert d.context["action"]["available_actions"][0]["action_id"] == "ignore_objective"
-    assert "forzaste" in d.options[1].label.lower()
+    assert d.options[0].label == "Ceder y reagrupar"
+    assert d.options[0].ev_score > d.options[1].ev_score
 
 
 # --- normal contest: enemy took it and you weren't there ---
@@ -135,7 +146,7 @@ def test_evaluate_objective_for_objective_trade():
 
 
 def test_the_priority_axis_outranks_being_at_the_pit():
-    """Decision del jugador (14-ago): estar cerca del foso no convierte la jugada
+    """Decision de diseno: estar cerca del foso no convierte la jugada
     en un "contestaste" cuando el equipo se llevo otra cosa. Antes la presencia
     mandaba y 152 de 214 intercambios detectados nunca llegaban a ofrecerse."""
     d = _evaluate(_facts(
@@ -170,7 +181,8 @@ def test_without_a_counterpart_the_priority_axis_does_not_appear():
     d = _evaluate(_facts(
         ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True},
         taken_by_us=False))
-    assert not any(o.label.startswith("Ir a por") for o in d.options)
+    ids = [a["action_id"] for a in d.context["action"]["available_actions"]]
+    assert "roam" not in ids and not any("Otra jugada" in o.label for o in d.options)
 
 
 def test_evaluate_not_there_low_setup_ceding_was_right():
@@ -182,26 +194,86 @@ def test_evaluate_not_there_low_setup_ceding_was_right():
     assert d.options[0].ev_score > d.options[1].ev_score  # cede/trade recommended
 
 
-def test_evaluate_not_there_team_level_cede_when_nobody_showed():
-    # Partial setup but no ally played it -> collective failure, not yours.
+def test_evaluate_not_there_nobody_showed_is_the_pit_axis():
+    # Antes [vision_setup "Coordinar el contest", ignore]: pasa al eje del foso.
     d = _evaluate(_facts(ctx={
         "taken_by": "enemigo", "at_pit": False, "too_far": True,
         "team_wards_near_pit": 1, "team_sweeps_near_pit": 1, "vision_diff": 1,
         "allies_near_pit": 0}, taken_by_us=False))
     assert _taken_action_id(d) == "ignore_objective"
-    assert d.context["action"]["available_actions"][0]["action_id"] == "vision_setup"
-    assert "equipo" in d.options[1].label.lower()
+    assert [a["action_id"] for a in d.context["action"]["available_actions"]] == \
+        ["fight_entry", "ignore_objective"]
 
 
-def test_evaluate_not_there_your_presence_was_the_gap():
-    # Setup AND allies in zone, but you didn't show -> your presence was missing.
+def test_evaluate_not_there_with_setup_recommends_going():
     d = _evaluate(_facts(ctx={
         "taken_by": "enemigo", "at_pit": False, "too_far": True,
         "team_wards_near_pit": 1, "team_sweeps_near_pit": 1, "vision_diff": 1,
         "allies_near_pit": 2}, taken_by_us=False))
     assert _taken_action_id(d) == "ignore_objective"
-    assert d.context["action"]["available_actions"][0]["action_id"] == "fight_entry"
-    assert "presentarte" in d.options[0].label.lower()
+    assert d.options[0].label.startswith("Ir a por")
+    assert d.options[0].ev_score > d.options[1].ev_score
+
+
+# --- #23 Fase D: contrato del vocabulario ---
+
+_BRANCH_CASES = {
+    "taken_with_setup": dict(),
+    "taken_low_setup": dict(ctx={"team_wards_near_pit": 0, "vision_diff": 0,
+                                 "allies_near_pit": 0, "at_pit": False}),
+    "must_defend": dict(ctx={"taken_by": "enemigo", "at_pit": False, "can_contest": False},
+                        taken_by_us=False, must_defend=True),
+    "dominating": dict(ctx={"objective_dominated": True}, presence_optional=True),
+    "dominating_far": dict(ctx={"objective_uncontested": True, "too_far": True,
+                                "at_pit": False}, presence_optional=True),
+    "lost_at_pit": dict(ctx={"taken_by": "enemigo", "at_pit": True}, taken_by_us=False),
+    "lost_at_pit_low": dict(ctx={"taken_by": "enemigo", "at_pit": True, "team_wards_near_pit": 0,
+                                 "vision_diff": 0, "allies_near_pit": 0}, taken_by_us=False),
+    "not_there_low": dict(ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+                               "team_wards_near_pit": 0, "vision_diff": 0,
+                               "allies_near_pit": 0}, taken_by_us=False),
+    "not_there_alone": dict(ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+                                 "team_sweeps_near_pit": 1, "allies_near_pit": 0},
+                            taken_by_us=False),
+    "not_there_team": dict(ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+                                "team_sweeps_near_pit": 1, "allies_near_pit": 2},
+                           taken_by_us=False),
+    "priority": dict(ctx={"taken_by": "enemigo", "at_pit": False, "too_far": True,
+                          "traded_for": "las larvas"}, taken_by_us=False),
+}
+
+
+def test_the_argument_states_facts_not_the_answer():
+    """La etapa 01 no puede llevar la respuesta: antes, con must_defend, decia
+    "lo correcto era cederlo y defender/reagrupar"."""
+    for name, over in _BRANCH_CASES.items():
+        arg = _evaluate(_facts(**over)).argument.lower()
+        assert "lo correcto" not in arg and "fue tarde" not in arg, name
+
+
+def test_no_option_self_describes_or_carries_a_verdict():
+    banned = ("hiciste", "correcto", "válido", "acertad", "valía más", "contestaste",
+              "forzaste", "conseguiste", "cediste", "se perdió", "aprovechaste", "acompañaste")
+    for name, over in _BRANCH_CASES.items():
+        for o in _evaluate(_facts(**over)).options:
+            text = (o.label + " " + o.predicted_consequence).lower()
+            assert not any(b in text for b in banned), (name, o.label, o.predicted_consequence)
+
+
+def test_the_label_set_does_not_depend_on_setup_or_outcome():
+    """Todas las ramas del foso ofrecen las mismas dos etiquetas: el menu no
+    puede delatar el lado del umbral de setup ni el desenlace."""
+    pit = ("taken_with_setup", "taken_low_setup", "must_defend", "lost_at_pit",
+           "lost_at_pit_low", "not_there_low", "not_there_alone", "not_there_team")
+    sets = {n: frozenset(o.label for o in _evaluate(_facts(**_BRANCH_CASES[n])).options)
+            for n in pit}
+    assert len(set(sets.values())) == 1, sets
+
+
+def test_every_branch_marks_exactly_one_taken_option():
+    for name, over in _BRANCH_CASES.items():
+        d = _evaluate(_facts(**over))
+        assert sum(o.taken for o in d.options) == 1, name
 
 
 def test_evaluate_takes_no_conn():

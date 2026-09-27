@@ -43,10 +43,12 @@ def test_death_decision_has_wellformed_action_and_single_taken_option(conn):
 
     d = D.analyze_deaths(conn, ids["match_id"])[0]
 
-    # Exactly one option is flagged as the one the player took.
+    # Exactly one option is flagged as the one the player took -- by the explicit
+    # flag. Since #23 Fase C no label says "(lo que hiciste)": the UI adds that
+    # chip from `taken`, and the label is the axis, not a self-description.
     assert taken_index(d.options) is not None
-    taken = [o for o in d.options if "hiciste" in o.label.lower()]
-    assert len(taken) == 1
+    assert sum(1 for o in d.options if o.taken) == 1
+    assert not any("hiciste" in o.label.lower() for o in d.options)
 
     action = d.context["action"]
     assert action["detector_id"] == "death_v1"

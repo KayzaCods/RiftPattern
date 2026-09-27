@@ -497,14 +497,14 @@ const DET_DOTS = { objective_readiness_v1: [8, 8, 1.7] };
 // pesaban lo mismo y el ojo no tenia donde aterrizar. Cada dato recibe ahora su
 // tratamiento: el campeon es texto, el minuto va en mono porque es un dato, la
 // fecha queda tenue y el gap EV se separa como medida, con su explicacion.
-function RowMeta({champion, date, time, evGap}){
+// Sin "gap EV": las dos colas que usan esta fila (Sesion de hoy y
+// trades) solo traen momentos SIN marcar, y en un menu binario gap>0 dice que la
+// mejor opcion es la que no tomaste. Era la respuesta, pintada en la fila.
+function RowMeta({champion, date, time}){
   return h("span", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:"var(--t-micro)",lineHeight:1.5}},
     champion && h("span", {style:{color:"var(--ink-soft)",fontWeight:600}}, champion),
     time && h("span", {className:"mono", style:{color:"var(--ink)"}}, time),
-    date && h("span", {style:{color:"var(--ink-faint)"}}, date),
-    evGap!=null && h("span", {className:"chip mono",
-      title:"Diferencia de EV entre la mejor opción y la que tomaste: cuánto había en juego"},
-      "gap EV ", evGap.toFixed(2))
+    date && h("span", {style:{color:"var(--ink-faint)"}}, date)
   );
 }
 
@@ -584,6 +584,46 @@ function powerColor(idx){
 // HEF: composite, auditable decision-quality score with its breakdown — the
 // weighted terms (power/info/wave/action-fit) and the penalties Π applied.
 const HEF_TERM_LABELS = {power:"Poder", info:"Info / visión", wave:"Oleada", action_fit:"Acción ↔ estado"};
+// CORTE DEL ARGUMENTO. En death_v1 y tempo_v1 la ULTIMA frase del
+// argumento persistido compara lo que hiciste con la opcion de mayor EV, y en
+// menus binarios cualquiera de sus variantes nombra la respuesta. Se corta al
+// PINTAR, no en la DB: el `argument` guardado, /api/* y los fingerprints no
+// cambian. `pre` va en la etapa 01; `reveal` baja a la 04, tras el gate.
+// Marcadores = el arranque literal de las plantillas de comparacion de EV de
+// death.py y tempo.py; tests/test_argument_reveal_split.py vigila la deriva.
+// Medido el 26-sep: 2014/2014 argumentos de death+tempo tienen exactamente uno,
+// y es la cola del texto. Sin marcador (objective, trade) no hay nada que cortar.
+const REVEAL_MARKERS = [
+  "Opción de mayor EV:",
+  "Lo que hiciste ES la opción de mayor EV",
+  "Las heurísticas no marcan una alternativa",
+  "Tu decisión de quedarte estaba justificada",
+];
+function splitArgument(text){
+  const s = text || "";
+  let cut = -1;
+  for(const m of REVEAL_MARKERS){ const i = s.indexOf(m); if(i>=0 && (cut<0 || i<cut)) cut = i; }
+  return cut<0 ? {pre:s, reveal:""} : {pre:s.slice(0,cut).trimEnd(), reveal:s.slice(cut)};
+}
+
+// Sufijos de veredicto en las ETIQUETAS de opcion, literales de las
+// plantillas VIEJAS de objective_readiness.py (la Fase D del #23 los quito de las
+// plantillas; esto queda para filas persistidas antes). En el picker se quitan;
+// la etiqueta completa sigue en la etapa 04 y en la DB.
+// Medido el 26-sep: los cinco van SIEMPRE en la opcion de max EV (973/973).
+const LABEL_VERDICT_SUFFIXES = [
+  " — válido",
+  " — uso correcto del tiempo",
+  " — fue lo correcto",
+  " — la decisión era correcta",
+  " valía más que forzarlo",
+];
+function pickerLabel(label){
+  const s = label || "";
+  for(const v of LABEL_VERDICT_SUFFIXES){ if(s.endsWith(v)) return s.slice(0, -v.length); }
+  return s;
+}
+
 function HefPanel({hef}){
   const c = powerColor(hef.score);
   const terms = hef.terms || {}, weights = hef.weights || {}, pen = hef.penalties || {};
@@ -605,7 +645,7 @@ function HefPanel({hef}){
   );
 }
 
-// ------------------------------------------------- tira de minimapa
+// ------------------------------------------------- tira de minimapa (D, §5.2)
 // EL ANCLAJE TEMPORAL ES EL ESLABON FRAGIL, Y ES INVISIBLE AL REVISAR: la tira
 // se ve perfectamente bien mostrando el momento equivocado. En muerte y objetivo
 // el `game_time_ms` es el DESENLACE (el CHAMPION_KILL, el ELITE_MONSTER_KILL),
@@ -834,6 +874,12 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
   // opcion que el usuario nunca eligio. La eleccion real se muestra, resuelta
   // contra la lista de entonces, en el bloque de marca historica.
   const [best, setBest] = useState((d.best_option==null || d.historical_mark) ? null : d.best_option);
+  // GATE DE REVELACION: lo que el programa recomienda se abre con la
+  // eleccion GUARDADA en esta encarnacion, no con la SELECCIONADA. Con el gate
+  // en `best` bastaba un clic para ver la recomendacion y cambiar de opcion
+  // antes de guardar: no quedaba ninguna primera eleccion independiente. Una
+  // marca historica no cuenta como guardada (su indice apunta a otras opciones).
+  const [revealed, setRevealed] = useState(d.best_option!=null && !d.historical_mark);
   const [markType, setMarkType] = useState(d.mark_type || null);
   const [saveState, setSaveState] = useState("idle");
   const [feedbackState, setFeedbackState] = useState("idle");
@@ -866,6 +912,14 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
   const _evs = (d.options||[]).map(o=>o.ev||0).slice().sort((a,b)=>b-a);
   const tieGap = _evs.length>=2 ? Math.round((_evs[0]-_evs[1])*100)/100 : null;
   const isTie = tieGap!=null && tieGap<=0.10;
+  const argParts = splitArgument(d.argument);
+  // ORDEN DE PRESENTACION FIJO (#23 Fase D): alfabetico por etiqueta, no el
+  // orden guardado. El orden guardado es parte del fingerprint y en objective lo
+  // decide un umbral de setup de cada rama, asi que mostrarlo tal cual delataba
+  // la recomendacion. Solo cambia lo que se VE: el indice que se guarda
+  // (`best`, user_best_option) sigue siendo el original.
+  const shownOrder = d.options.map((_,i)=>i)
+    .sort((a,b)=>(d.options[a].label||"").localeCompare(d.options[b].label||"","es"));
   // Fila de lista abierta: separada por hairline, no una caja con filete de
   // acento (esa combinacion —raya de color sobre tarjeta redondeada, repetida en
   // cada fila— es la receta de plantilla). El detector lo identifica su etiqueta.
@@ -899,7 +953,9 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
         // si esta bien o mal. En su lugar va la MISMA etiqueta interpretable que
         // usa el detalle (hef_label del backend), asi que nunca pueden divergir.
         // El valor exacto sigue disponible al expandir.
-        d.hef && d.hef.label && h("span", {
+        // Solo con la eleccion guardada: la etiqueta evalua lo que
+        // hiciste, y verla antes de marcar es ver el juicio del programa.
+        revealed && d.hef && d.hef.label && h("span", {
           title:`Evaluación del programa: ${d.hef.score!=null?d.hef.score.toFixed(2):"—"} · expande para ver el desglose`,
           style:{fontSize:"var(--t-micro)",fontWeight:600,color:powerColor(d.hef.score),
             background:evBg(d.hef.score),padding:"3px 9px",borderRadius:"var(--radius-sm)",whiteSpace:"nowrap"}},
@@ -912,8 +968,10 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
       h(DecisionStage, {num:"01", title:"Análisis del programa", tone:"analysis"},
         d.outcome && h("p", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",marginBottom:d.hef&&d.hef.score!=null?"var(--s4)":0}}, d.outcome),
         h("p", {className:"sec"}, "Inferencia del programa"),
-        h("div", {className:"prose", style:{marginBottom:"var(--s5)"}}, d.argument),
-        d.hef && d.hef.score!=null && h(HefPanel, {hef:d.hef})
+        // Solo lo que el programa LEE de la situacion. Su comparacion con la
+        // opcion de mayor EV y la evaluacion HEF de lo que hiciste son juicios:
+        // bajan a la etapa 04, tras el gate.
+        h("div", {className:"prose", style:{marginBottom:"var(--s5)"}}, argParts.pre)
       ),
       h(DecisionStage, {num:"02", title:"Evidencia disponible", tone:"evidence"},
       h("p", {className:"sec"}, "Observación · contexto capturado"),
@@ -938,6 +996,10 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
       // hay `optimal`, ni EV, ni barra, ni color de recomendacion.
       // `lo que hiciste` y `tu eleccion` se quedan: son hechos, no juicios.
       // El desglose auditable con EV y recomendacion vive en la etapa 04.
+      // Tampoco la CONSECUENCIA prevista ni los sufijos de veredicto de la
+      // etiqueta: son prediccion del programa y varias plantillas los
+      // redactan como veredicto ("El arreglo es…", "Hiciste lo correcto",
+      // "— fue lo correcto", "márcala"). La consecuencia baja a la etapa 04.
       // El clip vive en la EVIDENCIA, no al final de la tarjeta. Estaba debajo de
       // todo y obligaba a bajar hasta el fondo y volver a subir para leer en qué
       // minuto pasan las cosas mientras se elige la opción.
@@ -953,19 +1015,18 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
       h("div", {style:{fontSize:"var(--t-micro)",color:"var(--ink-faint)",marginBottom:"var(--s3)",lineHeight:1.5}},
         "Elige antes de ver qué recomienda el programa: su evaluación aparece abajo, en «Calibración»."),
       h("div", {style:{marginBottom:14}},
-        ...d.options.map((opt,i) =>
+        ...shownOrder.map(i => [d.options[i], i]).map(([opt,i]) =>
           h("button", {key:i, type:"button", "aria-pressed":best===i, onClick:(e)=>{e.stopPropagation(); setBest(best===i?null:i); setSaveState("idle");},
             title:"Marca cuál era la opción adecuada",
             className:"option", "data-picked":best===i?"1":undefined},
             h("div", {style:{display:"flex",justifyContent:"space-between",marginBottom:5,gap:8}},
               h("span", {style:{fontSize:"var(--t-xs)",color:"var(--ink-soft)",fontWeight:opt.taken?600:400,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}},
                 h("span", {className:"option-mark", "aria-hidden":"true"}),
-                opt.label,
+                pickerLabel(opt.label),
                 opt.taken && h("span",{className:"chip",style:{background:"transparent",borderColor:"var(--hairline-strong)"}},"lo que hiciste"),
                 best===i && h("span",{className:"chip",style:{color:"var(--signal-nav)",background:"transparent",borderColor:"var(--signal-nav)"}},"tu elección")
               )
-            ),
-            opt.consequence && h("div", {style:{fontSize:"var(--t-xs)",color:"var(--ink-faint)",marginTop:4}}, opt.consequence)
+            )
           )
         )
       ),
@@ -1005,7 +1066,8 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
             const needsType = best!=null && !markType;
             return h("button", {disabled:needsType,
               onClick:async(e)=>{e.stopPropagation(); if(needsType) return;
-                setSaveState("saving"); const ok=await onSave(d.id,{note,best_option:best,mark_type:markType}); setSaveState(ok?"success":"error");},
+                setSaveState("saving"); const ok=await onSave(d.id,{note,best_option:best,mark_type:markType}); setSaveState(ok?"success":"error");
+                if(ok) setRevealed(best!=null);},
               title: needsType ? "Elige el tipo de marca" : "",
               className:"btn btn-primary"},
               "Guardar razonamiento");
@@ -1019,12 +1081,13 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
       h(DecisionStage, {num:"04", icon:fb==="agree"?"✓":fb==="equivalent"?"≈":fb==="disagree"?"×":"?", title:"Calibración / resultado", tone:fb||"risk", marker:true},
       // El desglose auditable vive AQUI, despues de que el jugador ya eligio:
       // sale del picker para no anclarlo, pero no desaparece del sistema.
-      // GATE: nada del modelo se dibuja hasta que el jugador ha registrado su
-      // eleccion. Sacar el desglose del picker no bastaba -- seguia siendo
-      // visible mas abajo y bastaba con bajar para verlo antes de decidir. No se
-      // difumina ni se deja en silueta: eso tambien da pistas. No se renderiza.
-      best==null ? h("div", {className:"note", style:{marginBottom:"var(--s5)"}},
-        h("b", null, "Disponible después de registrar tu decisión."),
+      // GATE: nada del modelo se dibuja hasta que el jugador ha GUARDADO su
+      // eleccion (`revealed`, no `best`: seleccionar no es registrar). Sacar el
+      // desglose del picker no bastaba -- seguia siendo visible mas abajo y
+      // bastaba con bajar para verlo antes de decidir. No se difumina ni se deja
+      // en silueta: eso tambien da pistas. No se renderiza.
+      !revealed ? h("div", {className:"note", style:{marginBottom:"var(--s5)"}},
+        h("b", null, "Disponible después de guardar tu elección."),
         " El programa no enseña su recomendación antes de que respondas: si la vieras, tu marca dejaría de ser un juicio independiente y el learner entrenaría contra su propia copia.")
       : h("div", null,
       h("p", {className:"sec"}, "Lo que recomendaba el programa"),
@@ -1032,7 +1095,7 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
         h(Ico,{name:"approx",size:12}),
         h("span",{}, `Decisión cercana: las dos mejores opciones son prácticamente equivalentes (Δ ${tieGap.toFixed(2)}). Elegir la tuya no es un error — si crees que ambas valen, marca "≈ equivalentes" en vez de "se equivoca".`)),
       h("div", {style:{marginBottom:"var(--s5)"}},
-        ...d.options.map((opt,i) =>
+        ...shownOrder.map(i => [d.options[i], i]).map(([opt,i]) =>
           h("div", {key:i, style:{marginBottom:7}},
             h("div", {style:{display:"flex",justifyContent:"space-between",gap:8,marginBottom:4}},
               h("span", {style:{fontSize:"var(--t-xs)",color:opt.optimal?evColor(opt.ev):"var(--ink-soft)",
@@ -1043,9 +1106,14 @@ function DecisionCard({d, exp, onToggle, fb, onFb, clipOpen, onClip, onSave, dom
                 best===i && h("span",{className:"chip",style:{color:"var(--signal-nav)",background:"transparent",borderColor:"var(--signal-nav)"}},"tu elección")),
               h("span", {className:"mono", style:{fontSize:"var(--t-xs)",color:evColor(opt.ev)}}, fmtEV(opt.ev))),
             h("div", {className:"meter"},
-              h("i", {style:{width:`${(opt.ev||0)*100}%`,background:opt.optimal?"var(--signal-ok)":evColor(opt.ev)}})))
+              h("i", {style:{width:`${(opt.ev||0)*100}%`,background:opt.optimal?"var(--signal-ok)":evColor(opt.ev)}})),
+            opt.consequence && h("div", {style:{fontSize:"var(--t-xs)",color:"var(--ink-faint)",marginTop:4}}, opt.consequence))
         )
       ),
+      // Lo que salio de la etapa 01: la comparacion con la opcion de
+      // mayor EV y la evaluacion HEF de lo que hiciste.
+      argParts.reveal && h("div", {className:"prose", style:{marginBottom:"var(--s5)"}}, argParts.reveal),
+      d.hef && d.hef.score!=null && h(HefPanel, {hef:d.hef}),
       // "reward" era jerga interna sin explicacion en la UI.
       d.reward_score!=null && h("div", {className:"well", style:{marginBottom:"var(--s5)"}},
         h("div", {style:{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}},
@@ -1362,12 +1430,14 @@ function VizAnnotation({d, onOpen}){
       h("span", {style:{fontSize:12,fontWeight:500}}, d.champion),
       h("span", {style:{fontSize:11,color:"var(--color-text-tertiary)",fontFamily:"var(--font-mono)"}}, d.time),
       h("div", {style:{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}},
-        d.power_index!=null && h("span", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:powerColor(d.power_index)}}, `Fz ${d.power_index.toFixed(2)}`),
-        h("span", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:evColor(d.ev_taken)}}, `EV ${fmtEV(d.ev_taken)}`)
+        // Sin el EV de lo que hiciste: la anotacion se ve ANTES de
+        // abrir la card, y ese numero dice si tu opcion era la mejor. La
+        // fuerza local (Fz) es lectura del estado, no juicio: se queda.
+        d.power_index!=null && h("span", {style:{fontSize:11,fontFamily:"var(--font-mono)",color:powerColor(d.power_index)}}, `Fz ${d.power_index.toFixed(2)}`)
       )
     ),
     h("div", {style:{fontSize:12,fontWeight:500,marginBottom:3}}, d.moment),
-    d.argument && h("div", {style:{fontSize:12,lineHeight:1.55,color:"var(--color-text-secondary)"}}, d.argument),
+    d.argument && h("div", {style:{fontSize:12,lineHeight:1.55,color:"var(--color-text-secondary)"}}, splitArgument(d.argument).pre),
     h("button", {onClick:(e)=>{e.stopPropagation(); onOpen&&onOpen(d.id);}, style:{marginTop:6,fontSize:11,color:"var(--color-text-info)",padding:0}}, "Expandir aquí ↓")
   );
 }
@@ -1483,9 +1553,11 @@ function CompareCard({d}){
       d.objective && chip(d.objective)
     ),
     h("div", {style:{fontSize:12,color:"var(--color-text-secondary)",marginBottom:8}}, d.moment),
-    d.hef && d.hef.score!=null && h(HefPanel, {hef:d.hef}),
+    // Sin HefPanel y sin la comparacion de EV: la preferencia A/B
+    // entrena al mismo learner que las marcas, y ver que opina el programa de
+    // cada momento antes de elegir la convertiria en una copia de su formula.
     d.outcome && h("div", {style:{fontSize:11,color:"var(--color-text-tertiary)",marginBottom:6}}, d.outcome),
-    d.argument && h("div", {style:{fontSize:12,lineHeight:1.55,color:"var(--color-text-secondary)",borderLeft:"2px solid var(--color-border-secondary)",paddingLeft:8,marginBottom:8}}, d.argument),
+    d.argument && h("div", {style:{fontSize:12,lineHeight:1.55,color:"var(--color-text-secondary)",borderLeft:"2px solid var(--color-border-secondary)",paddingLeft:8,marginBottom:8}}, splitArgument(d.argument).pre),
     d.has_clip && h("button", {onClick:()=>setClip(c=>!c), style:{fontSize:11,display:"flex",alignItems:"center",gap:4,color:"var(--color-text-info)",padding:"2px 0"}},
       h(Ico,{name:"play",size:12}), clip?"Ocultar clip":`Ver clip${d.clip_offset_s!=null?` @ ${Math.floor(d.clip_offset_s/60)}:${String(Math.floor(d.clip_offset_s%60)).padStart(2,"0")}`:""}`),
     clip && d.has_clip && h("video", {controls:true, preload:"metadata", src:`/clip?id=${d.id}`,
@@ -1694,11 +1766,25 @@ function ReviewQueue({queue, onJump, onRefresh, decisions, fbs, onFb, onSave}){
 // Sesion de hoy (#16): 5-6 momentos SIN marcar en mezcla anti-sesgo. Cada card
 // salta a su decision (misma mecanica que Revision); al marcar y refrescar,
 // salen de la sesion.
+// Las insignias dicen POR QUE entra el momento sin decir QUE opinaba el
+// programa. Los cubos de lol_coach/session.py se forman con el gap de
+// EV: "acierto difícil" (en verde) era gap<=0 -> "lo que hiciste era lo mejor",
+// y "objetivo de mayor costo" era gap>0 -> "no lo era". Como la cola solo trae
+// momentos SIN marcar, eso era la respuesta antes de elegir. Renombrarlos no
+// basta (la pertenencia al cubo sigue siendo el gap): los tres comparten
+// insignia. "patrón dominante" se queda: su cubo sale de la clase de accion y
+// la fuerza local, no del EV. El `reason` del backend no se usa como tooltip.
 const SESSION_BADGE = {
-  dominant:  {label:"patrón dominante", color:"var(--det-death)"},
-  objective: {label:"objetivo de mayor costo", color:"var(--det-objective)"},
-  success:   {label:"acierto difícil", color:"var(--signal-ok)"},
-  other:     {label:"variedad", color:"var(--pit-baron)"},
+  dominant:  {label:"patrón dominante", color:"var(--det-death)",
+    title:"Muerte con ventaja local: el patrón que más se repite en tus partidas"},
+  // objective (gap>0), success (gap<=0) y other comparten insignia a
+  // proposito: si se distinguen, la pertenencia al cubo ES el gap.
+  objective: {label:"variedad", color:"var(--pit-baron)",
+    title:"Variedad: no sobre-entrenar un solo sesgo"},
+  success:   {label:"variedad", color:"var(--pit-baron)",
+    title:"Variedad: no sobre-entrenar un solo sesgo"},
+  other:     {label:"variedad", color:"var(--pit-baron)",
+    title:"Variedad: no sobre-entrenar un solo sesgo"},
 };
 function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefresh, onMore}){
   const [expId, setExpId] = useState(null);   // momento expandido INLINE (se revisa aquí, sin saltar de pestaña)
@@ -1709,6 +1795,13 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
   // cualquier otra pestana (fbs es el estado global de agree/disagree).
   const isDone = (id) => !!done[id] || !!fbs[id];
   const nDone = data.moments.filter(m=>isDone(m.id)).length;
+  // ORDEN NEUTRO: session.py llena los cubos en orden fijo (3
+  // dominant, objective, success, other) y la fila numerada lo conservaba, asi
+  // que la POSICION delataba el cubo -y el cubo es el gap- aunque la insignia
+  // dijera "variedad". Tras el patron dominante, el resto va por fecha.
+  const recent = (a,b) => ((b.game_start_ms||0)-(a.game_start_ms||0)) || ((b.game_time_ms||0)-(a.game_time_ms||0));
+  const ordered = [...data.moments.filter(m=>m.bucket==="dominant"),
+                   ...data.moments.filter(m=>m.bucket!=="dominant").sort(recent)];
   return h("div", null,
     h("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}},
       h("div", {style:{fontSize:12,color:"var(--color-text-tertiary)"}},
@@ -1722,14 +1815,14 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
       `${t.count} de tus últimos ${t.last} overextends fueron en min ${t.min_from}-${t.min_to} — ahí vive el hábito ahora mismo.`),
     data.moments.length===0
       ? h("div", {style:{textAlign:"center",color:"var(--color-text-tertiary)",padding:"40px 0",fontSize:13}}, "Nada sin marcar — sesión al día.")
-      : data.moments.map((mo,i) => {
+      : ordered.map((mo,i) => {
           const b = SESSION_BADGE[mo.bucket] || SESSION_BADGE.other;
           const open = expId===mo.id;
           const moDone = isDone(mo.id);
           const full = open ? decisions.find(d=>d.id===mo.id) : null;
           return h("div", {key:mo.id, id:"sv-"+mo.id, className:"ticket", "data-open":open?"1":undefined},
             h("button", {onClick:()=>{ setExpId(open?null:mo.id); setClipId(null); },
-              title: open ? "Cerrar" : mo.reason,
+              title: open ? "Cerrar" : b.title,
               style:{display:"flex",gap:10,alignItems:"center",width:"100%",textAlign:"left",
                 border:0,borderBottom:"1px solid var(--hairline)",
                 background: open ? "var(--surface)" : "transparent",
@@ -1739,7 +1832,7 @@ function SessionView({data, done, decisions, fbs, onFb, onSave, onJump, onRefres
                 h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3,minWidth:0}},
                   h(DetIcon, {detector:mo.detector, size:13, color:(DET[mo.detector]||{}).acc}),
                   h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,color:"var(--ink)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || mo.detector)),
-                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time, evGap:mo.ev_gap})
+                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time})
               ),
               moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid color-mix(in oklab,var(--signal-ok) 40%,transparent)",background:"color-mix(in oklab,var(--signal-ok) 12%,transparent)",color:"var(--signal-ok)",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
               h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${tonedBorder(b.color)}`,background:tint(b.color,8),color:b.color,whiteSpace:"nowrap",flexShrink:0}}, b.label),
@@ -1816,7 +1909,7 @@ function TradeQueueView({data, done, fbs, onFb, onSave, onJump, onRefresh}){
                 h("div", {style:{display:"flex",alignItems:"center",gap:6,marginBottom:3,minWidth:0}},
                   h(DetIcon, {detector:"trade_v1", size:13, color:DET.trade_v1.acc}),
                   h("span", {style:{fontSize:"var(--t-xs)",fontWeight:600,color:"var(--ink)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, mo.moment || "Trade perdido sin marcar")),
-                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time, evGap:mo.ev_gap})
+                h(RowMeta, {champion:mo.champion, date:mo.date, time:mo.time})
               ),
               moDone && h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid color-mix(in oklab,var(--signal-ok) 40%,transparent)",background:"color-mix(in oklab,var(--signal-ok) 12%,transparent)",color:"var(--signal-ok)",whiteSpace:"nowrap",flexShrink:0}}, "completada"),
               h("span", {style:{fontSize:10,padding:"3px 8px",borderRadius:"var(--border-radius-md)",border:`0.5px solid ${tonedBorder(TRADE_ACCENT)}`,background:tint(TRADE_ACCENT,8),color:TRADE_ACCENT,whiteSpace:"nowrap",flexShrink:0,fontFamily:"var(--font-mono)"}}, bucket),
@@ -2703,10 +2796,18 @@ function App(){
     const patch = {};
     if("note" in payload) patch.feedback_note = payload.note;
     if("best_option" in payload) patch.best_option = payload.best_option;
+    // Guardar una opcion escribe el fingerprint ACTUAL (set_feedback): la marca
+    // deja de ser historica. Sin esto, reabrir la card antes de recargar la
+    // trataria como historica y cerraria el gate de revelacion.
+    if(typeof payload.best_option==="number") patch.historical_mark = null;
     if("mark_type" in payload) patch.mark_type = payload.mark_type;
     setDecisions(ds => ds.map(x => x.id===id ? {...x, ...patch} : x));
     setTradeData(td => (td && td.moments)
       ? {...td, moments: td.moments.map(x => x.id===id ? {...x, ...patch} : x)} : td);
+    // El anchor set pasa sus propios objetos a DecisionCard: sin este patch, al
+    // reabrir la card tras guardar, el gate de revelacion se cerraba otra vez.
+    setAnchorData(ad => (ad && ad.moments)
+      ? {...ad, moments: ad.moments.map(x => x.id===id ? {...x, ...patch} : x)} : ad);
     return true;
     }).catch(()=>false);
   };
@@ -2731,7 +2832,14 @@ function App(){
     if(fbs[d.id] || d.feedback_note || d.best_option!=null) reviewedByMatch[d.match]=(reviewedByMatch[d.match]||0)+1;
   });
   let shown = fbBase.filter(d => fbFilter==="all" || (fbFilter==="none" ? !fbs[d.id] : fbs[d.id]===fbFilter));
-  if(sort==="gap") shown = [...shown].sort((a,b)=>(b.ev_gap??-1)-(a.ev_gap??-1));
+  // "Más en juego" ordena por la distancia entre la mejor y la peor opcion, no
+  // por el gap contra lo que hiciste: con el filtro "sin marcar", el
+  // gap subia arriba justo las decisiones cuya respuesta en un menu binario es
+  // "la otra". La amplitud dice cuanto habia en juego sin decir en que sentido.
+  // La clave sigue siendo "gap" para no romper el orden guardado en sessionStorage.
+  const evSpread = d => { const e=(d.options||[]).map(o=>o.ev).filter(v=>typeof v==="number");
+    return e.length>=2 ? Math.max(...e)-Math.min(...e) : -1; };
+  if(sort==="gap") shown = [...shown].sort((a,b)=>evSpread(b)-evSpread(a));
   const visible = shown.slice(0, limit);
 
   const shownMatches = matches.filter(m => acc==="both" ? m.cohort!=="challenger" : m.cohort===acc);
@@ -2854,7 +2962,7 @@ function App(){
               background: fdet===k ? tint(dd.acc,8) : "transparent",
               color: fdet===k ? dd.acc : "var(--color-text-tertiary)"}}, dd.label)),
           h("div", {style:{marginLeft:"auto",display:"flex",gap:4}},
-            ...[{key:"recent",label:"Cronológico"},{key:"gap",label:"Mayor gap EV"}]
+            ...[{key:"recent",label:"Cronológico"},{key:"gap",label:"Más en juego"}]
               .map(s => h("button", {key:s.key, onClick:()=>setSort(s.key), style:{...sBadge(sort===s.key),fontSize:11,padding:"4px 10px"}}, s.label))
           )
         ),

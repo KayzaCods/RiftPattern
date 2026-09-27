@@ -43,6 +43,7 @@ from .features import (
     enemy_jungler_id,
     mmss,
     nearest_ally_tower_dist,
+    setup_score,
     taken_index,
 )
 
@@ -58,6 +59,16 @@ PRE_FIGHT_WINDOW_MS = 10_000   # visibility for the COMMIT decision is measured 
                                # had an event-unseen killer >= 20s, and none of them
                                # counted in enemies_unseen — info term inflated exactly
                                # where the player marks "debí retirarme").
+
+# EV de las opciones derivado del setup local (#23 Fase C), la misma cuenta que
+# trade_v1 (Task 5): el agresivo escala con el setup, el defensivo con su
+# complemento. Rango [0.25, 0.85]. Antes cada rama fijaba sus dos EV (0.64/0.72,
+# 0.62/0.52, 0.68/0.42, 0.70/0.42, 0.65/0.45): la rama -que sale del desenlace-
+# decidia la recomendacion, y el menu por si solo predecia la opcion de max EV en
+# 1949 de 1952 decisiones. Ahora la recomendacion depende de si PODIAS
+# ganar la pelea, no de como termino.
+EV_FLOOR = 0.25
+EV_SPAN = 0.60
 
 
 @dataclass
@@ -386,8 +397,8 @@ def _evaluate(facts: DeathFacts) -> Decision:
         action_class = "engage_blind"
 
     options = _build_options(
-        facts.fighters_for, facts.fighters_against, facts.nearest_ally_dist,
-        facts.non_combatant_unseen, facts.first_blood, action_class, facts.sacrifice_obj)
+        facts.fighters_for, facts.fighters_against, facts.non_combatant_unseen,
+        action_class, facts.sacrifice_obj, setup_score(facts.state_features))
 
     death_x, death_y = facts.death_pos
     context = {
@@ -422,11 +433,13 @@ def _evaluate(facts: DeathFacts) -> Decision:
         "state_features": facts.state_features,
     }
 
-    if action_class == "disengage_failed":
-        aids = [ACTION_DISENGAGE, ACTION_DISENGAGE]
-    elif action_class in ("trade_lost", "support_lost"):
+    # Mismo orden que las opciones de _build_options. disengage_failed ofrecia
+    # [disengage, disengage] -- "desenganchar antes" contra "te retiraste tarde",
+    # el mismo eje dicho dos veces -- y pasa al eje luchar/huir; es la unica rama
+    # cuyo fingerprint cambia (sus marcas quedan historicas, #23 Fase C).
+    if action_class in ("trade_lost", "support_lost"):
         aids = [ACTION_DISENGAGE, ACTION_FIGHT_ENTRY]
-    else:  # engage_worth / calculated_sacrifice / engage_blind: option 0 is fight-ish
+    else:  # engage_worth / calculated_sacrifice / engage_blind / disengage_failed
         aids = [ACTION_FIGHT_ENTRY, ACTION_DISENGAGE]
     context["action"] = build_action(DETECTOR_ID, options, aids)
 
@@ -454,142 +467,82 @@ def _evaluate(facts: DeathFacts) -> Decision:
 def _build_options(
     fighters_for: int,
     fighters_against: int,
-    nearest_dist: float | None,
     non_combatant_unseen: list[tuple[str, float]],
-    is_first_blood: bool,
     action_class: str = "engage_blind",
     sacrifice_obj: dict | None = None,
+    setup: float | None = None,
 ) -> list[Option]:
-    """Options for a death, framed by the INFERRED action (not always "engage").
-    EV scores are heuristic placeholders calibrated by feedback."""
+    """Un eje binario real por situacion (#23 Fase C), formulado desde el contexto
+    PREVIO a la jugada: nunca describe el desenlace ni se autoetiqueta "(lo que
+    hiciste)" -- eso lo lleva el flag `taken`. Los ejes son los del jugador:
+
+      pelea (engage_blind, engage_worth, trade_lost, disengage_failed): luchar / huir
+      apoyo (support_lost): intentar salvar la pelea / no sumar tu muerte
+      objetivo (calculated_sacrifice): llevarte el objetivo aunque mueras / salir vivo
+
+    La rama solo decide el EJE y cual se tomo; el EV sale del setup local. El
+    ORDEN de cada rama es el que ya tenia, para que el fingerprint (action_ids +
+    indice tomado) de las marcas existentes no cambie; la unica excepcion es
+    disengage_failed, que ofrecia `disengage` dos veces y no tenia eje."""
+    s = 0.5 if setup is None else setup
+    ev_fight = round(EV_FLOOR + EV_SPAN * s, 2)
+    ev_flee = round(EV_FLOOR + EV_SPAN * (1.0 - s), 2)
+    setup_desc = ("sin lectura de setup" if setup is None
+                  else f"setup local {round(setup * 100)}%")
     unseen_desc = (
-        " Enemigos no vistos: " + ", ".join(c for c, _ in non_combatant_unseen)
-        + ". Riesgo de flanqueo." if non_combatant_unseen else ""
+        " Enemigos sin ver cerca: " + ", ".join(c for c, _ in non_combatant_unseen) + "."
+        if non_combatant_unseen else ""
     )
+    fight_cons = (f"Pelea aparente {fighters_for}v{fighters_against}, {setup_desc}."
+                  + unseen_desc)
 
     if action_class == "calculated_sacrifice":
-        # You died but your team took an objective right there — life-for-objective trade.
         obj = (sacrifice_obj or {}).get("name", "el objetivo")
         return [
             Option(
-                label=f"Sacrificarte por {obj} (lo que hiciste)",
-                predicted_consequence=f"Cambiaste tu vida por {obj}. Es buen trade si {obj} valía más que tu muerte en ese momento (oro, mapa, timers).",
-                ev_score=0.64,
+                label=f"Llevarte {obj} aunque te cueste la vida",
+                predicted_consequence=(f"Aseguras {obj} y aceptas el tiempo muerto. "
+                                       + fight_cons),
+                ev_score=ev_fight,
                 taken=True,
             ),
             Option(
-                label=f"Llevarte {obj} y salir vivo",
-                predicted_consequence=f"Lo ideal es conseguir {obj} y desenganchar antes del colapso; el sacrificio solo se justifica si ya no había salida.",
-                ev_score=0.72,
+                label=f"Salir vivo y ceder {obj}",
+                predicted_consequence=f"Conservas tu vida y tu presencia en el mapa; {obj} queda para el rival.",
+                ev_score=ev_flee,
             ),
         ]
 
     if action_class == "support_lost":
-        # An ally fell BEFORE you committed: you joined/tried to save a fight that was
-        # already going badly. Supporting the team is often the right instinct (player:
-        # "fui a apoyar en cuanto vi la call, apliqué bien pero no salió"); the skill is
-        # judging whether the fight is still winnable — so the EVs are close, not a scolding.
         return [
             Option(
-                label="Evaluar antes de comprometerte: si la pelea ya está perdida, cortar pérdidas",
-                predicted_consequence="Un aliado ya había caído cuando entraste. Apoyar es correcto cuando la pelea aún se puede ganar; si ya está perdida, sumarte solo añade tu muerte." + unseen_desc,
-                ev_score=0.62,
+                label="No entrar: no sumar una segunda muerte",
+                predicted_consequence="Cedes la pelea que ya empezó y conservas tu vida para la siguiente jugada.",
+                ev_score=ev_flee,
             ),
             Option(
-                label="Acudiste a apoyar/salvar la pelea y cayó en contra (lo que hiciste)",
-                predicted_consequence="Decisión defendible — acudir a un aliado comprometido suele ser correcto; aquí la pelea ya no era ganable.",
-                ev_score=0.52,
+                label="Entrar a salvar la pelea",
+                predicted_consequence="Un aliado ya había caído: entras en inferioridad a intentar darle la vuelta. " + fight_cons,
+                ev_score=ev_fight,
                 taken=True,
             ),
         ]
 
+    fight = Option(
+        label="Luchar: quedarte y pelear",
+        predicted_consequence=fight_cons,
+        ev_score=ev_fight,
+        taken=action_class != "disengage_failed",
+    )
+    flee = Option(
+        label="Huir: salir antes de comprometerte",
+        predicted_consequence="Sueltas farm, oleada o posición a cambio de salir vivo.",
+        ev_score=ev_flee,
+        taken=action_class == "disengage_failed",
+    )
     if action_class == "trade_lost":
-        # A 2-sided exchange that went against you (allies/enemies fell right here).
-        # Not a solo engage/disengage — the lesson is reading/timing the trade.
-        return [
-            Option(
-                label="Leer el trade antes de entrar / cortarlo al primer signo de que se perdía",
-                predicted_consequence="Hubo intercambio por ambos lados y salió en contra. El arreglo es no tomar el trade en desventaja (números, visión, cooldowns) o salir a tiempo." + unseen_desc,
-                ev_score=0.68,
-            ),
-            Option(
-                label="Tomaste el intercambio y lo perdiste (lo que hiciste)",
-                predicted_consequence="Entraste a una pelea de dos lados que terminó en tu contra.",
-                ev_score=0.42,
-                taken=True,
-            ),
-        ]
-
-    if action_class == "disengage_failed":
-        # You were leaving and got caught. The fix is leaving EARLIER, not the retreat itself.
-        return [
-            Option(
-                label="Desenganchar antes: salir al primer ping/visión, sin estirar farm u oleada",
-                predicted_consequence="El disengage llegó tarde. El arreglo es soltar el farm/posición y salir al primer indicio de gank, no cuando ya te alcanzan." + unseen_desc,
-                ev_score=0.70,
-            ),
-            Option(
-                label="Te retiraste tarde y te alcanzaron (lo que hiciste)",
-                predicted_consequence="Ibas de salida pero la persecución/gank te alcanzó por salir tarde o sin cobertura.",
-                ev_score=0.42,
-                taken=True,
-            ),
-        ]
-
-    if action_class == "engage_worth":
-        # The play paid off: a kill/assist, OR the team won the fight you died in
-        # (your peeling/CC/shield mattered even without personal K/A).
-        return [
-            Option(
-                label="Engage que rindió (lo que hiciste)",
-                predicted_consequence="El play valió: kill/asistencia o tu equipo ganó la pelea (peeling/CC), aunque murieras." + unseen_desc,
-                ev_score=0.65,
-                taken=True,
-            ),
-            Option(
-                label="Retirarte / no pelear",
-                predicted_consequence="Evitabas la muerte pero perdías el play que conseguiste.",
-                ev_score=0.45,
-            ),
-        ]
-
-    # engage_blind: an over-committed/blind engage — retreating was better.
-    engage = 0.55
-    if fighters_against > fighters_for:
-        engage -= 0.20 * (fighters_against - fighters_for)
-    if non_combatant_unseen:
-        engage -= 0.10 * min(3, len(non_combatant_unseen))
-    if nearest_dist is None or nearest_dist > ALLY_NEAR_UNITS * 1.5:
-        engage -= 0.10
-    if is_first_blood:
-        engage -= 0.05
-    engage = max(0.05, min(1.0, engage))
-
-    retreat = 0.70
-    if fighters_for > fighters_against:
-        retreat -= 0.20
-    if non_combatant_unseen:
-        retreat += 0.10
-    if nearest_dist is not None and nearest_dist <= ALLY_NEAR_UNITS / 2:
-        retreat -= 0.05
-    retreat = max(0.10, min(1.0, retreat))
-
-    return [
-        Option(
-            label="Permanecer/engage (lo que hiciste)",
-            predicted_consequence=f"Pelea aparente {fighters_for}v{fighters_against}." + unseen_desc,
-            ev_score=round(engage, 2),
-            taken=True,
-        ),
-        Option(
-            label="Retirarte / disengage",
-            predicted_consequence=(
-                "Pierdes algo de exp/oro pero conservas tu KDA y mantienes presión."
-                + (" Ventaja de info pendiente sin resolver." if non_combatant_unseen else "")
-            ),
-            ev_score=round(retreat, 2),
-        ),
-    ]
+        return [flee, fight]      # orden historico: [disengage, fight_entry]
+    return [fight, flee]          # engage_blind / engage_worth / disengage_failed
 
 
 def _compose_argument(ctx: dict, options: list[Option]) -> str:
@@ -630,8 +583,11 @@ def _compose_argument(ctx: dict, options: list[Option]) -> str:
     if ctx.get("sacrifice_objective"):
         so = ctx["sacrifice_objective"]
         lines.append(
+            # Hecho, no veredicto: si la vida valia el objetivo es justo lo que
+            # pregunta el eje de opciones (#23 Fase C). Antes cerraba con "tu
+            # muerte compró ese objetivo, no fue una entrega en seco".
             f"Tu equipo se llevó {so['name']} justo aquí ({so['rel_s']:+.0f}s respecto a tu "
-            f"muerte): tu muerte compró ese objetivo, no fue una entrega en seco."
+            f"muerte)."
         )
 
     if ctx.get("combatant_enemies_unseen"):
@@ -660,13 +616,33 @@ def _compose_argument(ctx: dict, options: list[Option]) -> str:
         td = ctx["top_damager"]
         lines.append(f"Quien más daño te hizo: {td['champion']} ({td['damage']} de daño).")
 
+    if ctx.get("inferred_action_class") == "disengage_failed":
+        # El eje luchar/huir no expresa CUANDO saliste, y en esta clase es la mitad
+        # de la leccion (la vieja opcion "desenganchar antes" era eso). Va como
+        # lectura de la situacion, sin decir cual de los dos lados era el bueno.
+        lines.append(
+            "Ibas de salida cuando te alcanzaron: además de luchar o huir, cuenta "
+            "en qué momento sales."
+        )
+
     # Compare what you did with the recommended (highest EV). La opcion tomada sale
     # del flag explicito (features.taken_index), no de buscar "hiciste" en el label:
     # ese lookup por texto ataba la prosa del argumento a la redaccion de la opcion.
     _ti = taken_index(options)
     taken = options[_ti] if _ti is not None else None
     best = max(options, key=lambda o: o.ev_score) if options else None
-    if taken and best and best.label != taken.label and best.ev_score > taken.ev_score:
+    # Empate: max() se queda con la PRIMERA opcion, asi que sin esta guarda el
+    # veredicto de un eje parejo dependia del orden de la rama ("fue acertada" si
+    # la tomada iba primero, "no marcan alternativa" si iba segunda).
+    tied = (taken is not None and best is not None
+            and sum(1 for o in options if o.ev_score == best.ev_score) > 1
+            and taken.ev_score == best.ev_score)
+    if tied:
+        lines.append(
+            f"Las heurísticas no marcan una alternativa claramente superior "
+            f"(mejor EV {best.ev_score:.2f} vs lo que hiciste {taken.ev_score:.2f})."
+        )
+    elif taken and best and best.label != taken.label and best.ev_score > taken.ev_score:
         lines.append(
             f"Opción de mayor EV: \"{best.label}\" (EV {best.ev_score:.2f}) "
             f"vs lo que hiciste (EV {taken.ev_score:.2f}). "
