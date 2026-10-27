@@ -245,6 +245,17 @@ These are the parts I'm most proud of:
   ([policy delta](docs/experiments/policy_delta.md), in Spanish) closed as null
   for lack of power.
 
+- **Loss patterns** ([experiment report](docs/experiments/2026-10-27-patrones-de-derrota.md),
+  in Spanish; [read-only script](scripts/loss_patterns.py)). Across 291 games,
+  the associations that held up were team gold at minute 14, own deaths before
+  minute 14, and chained early deaths: win rate was 91.7% above +2000 gold vs
+  9.5% below −4000, and about 69–70% with two or fewer early deaths vs about
+  46–48% with four or more. Video-labeled “causes” (early enemy roams and late
+  objective deaths) did not replicate with a second independent rater (55–65%
+  inter-rater agreement) or Riot event data. A clock check, with each label
+  carrying the game clock read from its frame, ensured every label came from an
+  image actually reviewed. These are correlations, not causal findings.
+
 ---
 
 ## Setup
@@ -278,7 +289,7 @@ somewhere else (a second setup, or a synthetic one for a demo), set
 `LOL_COACH_CONFIG` to its path; an explicit path passed in code still wins over
 both.
 
-The suite needs no network and no Riot data. 678 tests in total. On a fresh clone 655 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
+The suite needs no network and no Riot data. 690 tests in total. On a fresh clone 667 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
 
 The minimap strip needs a one-time calibration per recording source. You drag a
 rectangle over the minimap on a sample frame, and the result is stored in

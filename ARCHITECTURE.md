@@ -748,6 +748,19 @@ these were built specifically to try to kill an idea that looked good.
   - **Closed as null for lack of power.** No bucket with n ≥ 8 in both cohorts
     has non-overlapping intervals. With about 20 reference games, this is a data
     limit, not evidence that the two play alike.
+- **Loss patterns** (`lol_coach/loss_patterns.py`, `scripts/loss_patterns.py`,
+  [report](docs/experiments/2026-10-27-patrones-de-derrota.md), in Spanish). The
+  pure module measures win rate by team gold at minute 14 and own deaths before
+  minute 14 (Wilson CIs); own-death rates per 10 minutes in losses vs wins (per-
+  game bootstrap); death risk near objective pits by team-gold band; and the
+  precision/recall of visible in-game signals (kills, towers, summed levels,
+  and “2 of 3”) for a −3000 team-gold deficit.
+  - It is a read-only analysis, not a detector: the script opens SQLite with
+    `mode=ro` and `PRAGMA query_only`; it writes no decisions and asks for no
+    feedback. Output goes to `data/loss_patterns.md` or the path passed with
+    `--out`.
+  - The hypothesis source declares its sample size. Results are correlations,
+    not causes, and have no out-of-sample validation.
 
 ---
 
@@ -823,10 +836,12 @@ a safety net for criterion refactors.
 - `test_download_champion_icons.py`: the icon downloader. Catalogue filtering,
   rejection of malicious ids, path containment, symlinks, PNG header validation,
   atomic writes and idempotence.
-- `test_exposure.py`, `test_anchor_eval.py`, `test_policy_delta.py`: the
-  read-only studies.
+- `test_exposure.py`, `test_anchor_eval.py`, `test_policy_delta.py`,
+  `test_loss_patterns.py`: the read-only studies. Loss-pattern tests use
+  synthetic games and a temporary SQLite database with the real schema; they
+  never use the real database.
 
-Nothing in the suite requires network access or Riot data. On a fresh clone 655 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
+Nothing in the suite requires network access or Riot data. On a fresh clone 667 pass and 23 are skipped: 18 compare the extracted trade scanner against a commit that only exists in the private working history, 4 need permission to create symlinks (Windows), and 1 needs a populated database. Without a `config.toml`, the test setup points the dashboard at a throwaway synthetic config (`LOL_COACH_CONFIG`) outside the repo, so the dashboard tests still run.
 
 ---
 
@@ -881,6 +896,7 @@ Nothing in the suite requires network access or Riot data. On a fresh clone 655 
 | `scripts/exposure_validation.py` | validate exposure_v1 against the labeled anchors |
 | `scripts/attention_experiment.py` | pre-registered attention experiment, stage 1 |
 | `scripts/policy_delta.py` | action distribution, own accounts vs reference cohort |
+| `scripts/loss_patterns.py` | read-only loss-pattern analysis; writes `data/loss_patterns.md` (or `--out`) |
 | `.venv\Scripts\python.exe -m pytest` | run the test suite |
 
 Everything below `sync_ascent.py` and `analyze.py` in that list is read-only,
